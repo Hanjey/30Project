@@ -1,0 +1,1 @@
+cmd_/root/code/30Project/walk_qemu_pg/walk_process.ko := ld -r -m elf_x86_64 -T /usr/src/linux-headers-3.13.0-24-generic/scripts/module-common.lds --build-id  -o /root/code/30Project/walk_qemu_pg/walk_process.ko /root/code/30Project/walk_qemu_pg/walk_process.o /root/code/30Project/walk_qemu_pg/walk_process.mod.o

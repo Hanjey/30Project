@@ -5,7 +5,23 @@
 #include <linux/list.h>
 #include <linux/mm.h>
 #include <asm/pgtable.h>
-
+#include <linux/swap.h>
+#include <linux/swapops.h>
+#include <linux/pagemap.h>
+#include <linux/rmap.h>
+/*we can get physics page belong to one process:
+ * 1、pagetable
+ * page table can indicate page in mmaping  and not mapping but in swap cache
+ * 2、pagecache
+ * pagecache is mainly caused by read ahead manism
+ * **/
+/*define globle data zone*/
+typedef struct _pfn_recoard{
+	unsigned long pfn_m[500];
+	unsigned long index;
+}pfn_recoard;
+/*define pfn data base*/
+static pfn_recoard pfn_rec;
 
 #define long_to_pfn(val) val>>12
 /*get target process struct  by pid*/
@@ -109,6 +125,65 @@ static int walk_page_table(struct task_struct *p){
 	printk("1g page count:%d\n",count_1g);
 	return 0;
 }
+/*when page->mapping ow bit clear, points to inode address_space , or NULL.If page mapped as anonymous 
+ * memory, low bit is set, and it points to anon_vma object:
+ * */
+
+/*if page anno*/
+/*
+static inline int PageAnon(struct page *page)
+{
+		return ((unsigned long)page->mapping & PAGE_MAPPING_ANON) != 0;
+}
+*/
+/*get annon page virtual address by page*/
+static unsigned int trans_page_vadd_anno(struct page *page){
+	struct anon_vma *anon_vma;
+	pgoff_t pgoff;
+	struct anon_vma_chain *avc;
+	unsigned long address;
+    anon_vma = page_lock_anon_vma_read(page);
+	if (!anon_vma)
+			return -1;
+	pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
+	anon_vma_interval_tree_foreach(avc, &anon_vma->rb_root, pgoff, pgoff) {
+				struct vm_area_struct *vma = avc->vma;
+				address = page_address_in_vma(page, vma);
+	}
+	return address;
+}
+
+/*get file mapping page virtual address by page*/
+static unsigned int trans_page_vadd_file(struct page *page){
+	struct address_space *mapping = page->mapping;
+	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
+	struct vm_area_struct *vma;
+	unsigned long address;
+	mutex_lock(&mapping->i_mmap_mutex);
+	vma_interval_tree_foreach(vma, &mapping->i_mmap, pgoff, pgoff) {
+			 address = page_address_in_vma(page, vma);
+	}
+	return address;
+}
+/*check if unmapping page existed in swap cache or page cache*/
+static int check_page_cache(pte_t *un_map_ptes,int page_num){
+	struct page *found_page=NULL;
+	unsigned long found_pfn;
+	int i=0;
+	swp_entry_t entry;
+	while(i<page_num){
+		entry=pte_to_swp_entry(un_map_ptes[i]);
+		found_page=find_get_page(swap_address_space(entry),entry.val);
+		if(found_page!=NULL){
+			found_pfn=page_to_pfn(found_page);
+			pfn_rec.pfn_m[pfn_rec.index++]=found_pfn;
+		}
+		i++;	
+	}
+	return 0;
+}
+
+
 static int mainfun(void){
 	struct task_struct *tpro=0;
 	getTargetProcess(&tpro,795);
@@ -122,7 +197,7 @@ static int mainfun(void){
 }
 static  __init int walk_init(void){
 	mainfun();
-	printk("init waik process\n");
+	printk("init walk process\n");
 	return 0;
 }
 static  __exit void walk_exit(void){
