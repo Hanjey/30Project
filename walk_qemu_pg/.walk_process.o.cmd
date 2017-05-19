@@ -3,6 +3,7 @@ cmd_/root/code/30Project/walk_qemu_pg/walk_process.o := gcc -Wp,-MD,/root/code/3
 source_/root/code/30Project/walk_qemu_pg/walk_process.o := /root/code/30Project/walk_qemu_pg/walk_process.c
 
 deps_/root/code/30Project/walk_qemu_pg/walk_process.o := \
+    $(wildcard include/config/compat.h) \
   include/linux/kernel.h \
     $(wildcard include/config/lbdaf.h) \
     $(wildcard include/config/preempt/voluntary.h) \
@@ -183,7 +184,6 @@ deps_/root/code/30Project/walk_qemu_pg/walk_process.o := \
   include/linux/percpu-defs.h \
     $(wildcard include/config/debug/force/weak/per/cpu.h) \
   include/linux/thread_info.h \
-    $(wildcard include/config/compat.h) \
     $(wildcard include/config/debug/stack/usage.h) \
   include/linux/bug.h \
   /usr/src/linux-headers-3.13.0-24-generic/arch/x86/include/asm/bug.h \
@@ -837,6 +837,8 @@ deps_/root/code/30Project/walk_qemu_pg/walk_process.o := \
   include/asm-generic/cacheflush.h \
   include/linux/hugetlb_inline.h \
   include/linux/rmap.h \
+  include/linux/proc_fs.h \
+  /root/code/30Project/walk_qemu_pg/walk_process.h \
 
 /root/code/30Project/walk_qemu_pg/walk_process.o: $(deps_/root/code/30Project/walk_qemu_pg/walk_process.o)
 

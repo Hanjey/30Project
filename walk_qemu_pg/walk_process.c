@@ -9,20 +9,59 @@
 #include <linux/swapops.h>
 #include <linux/pagemap.h>
 #include <linux/rmap.h>
+#include <linux/file.h>
+
+#include<linux/proc_fs.h>
+#include "walk_process.h"
 /*we can get physics page belong to one process:
  * 1、pagetable
  * page table can indicate page in mmaping  and not mapping but in swap cache
  * 2、pagecache
  * pagecache is mainly caused by read ahead manism
  * **/
-/*define globle data zone*/
+/*define globle data zone*/ 
 typedef struct _pfn_recoard{
 	unsigned long pfn_m[500];
 	unsigned long index;
 }pfn_recoard;
 /*define pfn data base*/
-static pfn_recoard pfn_rec;
 
+static pfn_recoard pfn_rec;
+struct memory_block{
+	unsigned long buffer_add;
+	int buffer_size;
+};
+
+
+/*pid: vm qemu process id
+ *mb: userspace address kernel need to write info to,mainly hash valu
+ *flags:flags indicate if the first or second 
+ * */
+typedef struct _vm_info{
+	int pid;
+	struct memory_block mb;
+	int flags;
+}vm_info_t;
+#define INDEX_PAGE_IN_RAM4K   0
+#define INDEX_PAGE_IN_CACHE4K 1
+#define INDEX_PAGE_IN_RAM2M   2
+#define INDEX_PAGE_IN_CACHE2M 3
+#define INDEX_COUNT 	      4
+typedef struct _page_recoard{
+	struct page *page_in_ram4k[300];
+    struct page *page_in_cache4k[100];
+	struct page *page_in_ram2m[100];
+	struct page *page_in_cache2m[50];
+	unsigned int index[4];
+	char page_name[4][20];
+}PageRecord;
+typedef struct _page_vaddr_record{
+	unsigned long pvaddr[500];
+	int index;
+}PageVaddrSet;
+
+PageRecord *page_record;
+PageVaddrSet *page_vset;
 #define long_to_pfn(val) val>>12
 /*get target process struct  by pid*/
 static int getTargetProcess(struct task_struct **tprocess,int pid){
@@ -49,7 +88,7 @@ static int getTargetProcess(struct task_struct **tprocess,int pid){
 #define PAGE_PRESENT_CHEN 0X1
 #define is_pmd_ram(x) (pmd_val(x) & PAGE_PRESENT_CHEN)
 #define is_pte_ram(x) (pte_val(x) & PAGE_PRESENT_CHEN)
-static int walk_page_table(struct task_struct *p){
+static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 	pgd_t *pgd;
 	pud_t *pud;
 	pmd_t *pmd;
@@ -60,6 +99,8 @@ static int walk_page_table(struct task_struct *p){
     int count_2m_ram=0;                                                                                                                   
     int count_1g=0;
 	int count_pg=0,count_pu=0,count_pm=0,count_pt=0;
+	int i;
+	struct page *page;
 	if(p->mm==NULL)
 		return -1;
 	if(p->mm->pgd==NULL)
@@ -86,10 +127,16 @@ static int walk_page_table(struct task_struct *p){
 							while(count_pt<511){
 							 //	pte=(pte_t *)page_address(pmd_page(*(pmd)));
 								if((!pte_none(*pte))){
-									if(is_pte_ram(*pte))
-										count_4k_ram++;
-									printk("pte:%lu\n",pte_val(*pte));
-									/*record 4K size page*/
+									page=pte_page(*pte);
+									if(is_pte_ram(*pte)){
+										i =page_record->index[INDEX_PAGE_IN_RAM4K];
+										page_record->page_in_ram4k[i]=page;
+										page_record->index[INDEX_PAGE_IN_RAM4K]++;
+									}else{
+										i =page_record->index[INDEX_PAGE_IN_CACHE4K];
+										page_record->page_in_cache4k[i]=page;
+										page_record->index[INDEX_PAGE_IN_CACHE4K]++;
+									}
 									count_4k++;
 								}
 								pte++;
@@ -98,8 +145,14 @@ static int walk_page_table(struct task_struct *p){
 						}
 						/*if pmd point to a 2m page and is in ram*/
 						if((!pmd_none(*pmd)&&pmd_large(*pmd))){
-							if(is_pmd_ram(*pmd))
-									count_2m_ram++;
+							page=pmd_page(*pmd);
+							if(is_pmd_ram(*pmd)){
+								i =page_record->index[INDEX_PAGE_IN_RAM2M];
+								page_record->page_in_ram2m[i]=page;
+								page_record->index[INDEX_PAGE_IN_RAM2M]++;
+							}else{
+								i =page_record->index[INDEX_PAGE_IN_CACHE2M];                                                               							  page_record->page_in_cache2m[i]=page;                                                                       								page_record->index[INDEX_PAGE_IN_CACHE2M]++;                                                                     
+							}
 							count_2m++;
 							/*record 2M size page*/
 						}
@@ -136,12 +189,36 @@ static inline int PageAnon(struct page *page)
 		return ((unsigned long)page->mapping & PAGE_MAPPING_ANON) != 0;
 }
 */
+/*view page record information*/
+static int view_page_record(PageRecord *p_record){
+	int j=0;
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM4K];j++){
+		printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_RAM4K],page_record->page_in_ram4k[j]);	
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE4K];j++){     
+	    printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_CACHE4K],page_record->page_in_cache4k[j]);
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM2M];j++){     
+	    printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_RAM2M],page_record->page_in_ram2m[j]);
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM2M];j++){     
+	    printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_CACHE2M],page_record->page_in_cache2m[j]);
+	}
+	return 0;
+}
+static int view_page_vadd(PageVaddrSet *page_vset){
+	int i=0;
+	while(i<page_vset->index){
+		printk("vaddr:%lu\n",page_vset->pvaddr[i]);
+	}
+	return 0;
+}
 /*get annon page virtual address by page*/
 static unsigned int trans_page_vadd_anno(struct page *page){
 	struct anon_vma *anon_vma;
 	pgoff_t pgoff;
 	struct anon_vma_chain *avc;
-	unsigned long address;
+	unsigned long address=0;
     anon_vma = page_lock_anon_vma_read(page);
 	if (!anon_vma)
 			return -1;
@@ -158,7 +235,7 @@ static unsigned int trans_page_vadd_file(struct page *page){
 	struct address_space *mapping = page->mapping;
 	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
 	struct vm_area_struct *vma;
-	unsigned long address;
+	unsigned long address=0;
 	mutex_lock(&mapping->i_mmap_mutex);
 	vma_interval_tree_foreach(vma, &mapping->i_mmap, pgoff, pgoff) {
 			 address = page_address_in_vma(page, vma);
@@ -182,25 +259,162 @@ static int check_page_cache(pte_t *un_map_ptes,int page_num){
 	}
 	return 0;
 }
-
-
-static int mainfun(void){
-	struct task_struct *tpro=0;
-	getTargetProcess(&tpro,795);
-	if(tpro==NULL){
-		printk("find no process!\n");
-		return -1;
+static int trans_page_to_vadd(PageRecord *page_record,PageVaddrSet *page_vset){
+	int i=0;
+	struct page *temp_page;
+	unsigned long vaddr;
+	if(page_record->index[INDEX_PAGE_IN_RAM4K]>0){
+		while(i<page_record->index[INDEX_PAGE_IN_RAM4K]){
+			temp_page=page_record->page_in_ram4k[i];
+			if(PageAnon(temp_page)){
+				vaddr=trans_page_vadd_anno(temp_page);
+				page_vset->pvaddr[page_vset->index]=vaddr;
+				page_vset->index++;
+			}
+			if(temp_page->mapping){
+				vaddr=trans_page_vadd_file(temp_page);
+				page_vset->pvaddr[page_vset->index]=vaddr;
+				page_vset->index++;
+			}
+		}	
 	}
-	printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
-	walk_page_table(tpro);
+	if(page_record->index[INDEX_PAGE_IN_CACHE4K]>0){
+	
+	}
+	if(page_record->index[INDEX_PAGE_IN_RAM2M]>0){
+	
+	}
+	if(page_record->index[INDEX_PAGE_IN_CACHE2M]>0){
+	
+	}	
 	return 0;
 }
+/*page_to_pfn transfer a page structure to pfn
+ *pte_page    transfer a pte to page structure
+ * */
+/*init page_record function*/
+static int init_page_record(PageRecord *page_record,PageVaddrSet *page_vset){
+	memset(page_record,0,sizeof(PageRecord));
+	memset(page_vset,0,sizeof(PageVaddrSet));
+	page_vset->index=0;
+	page_record->index[INDEX_PAGE_IN_RAM4K]=0;                                                                                           
+	page_record->index[INDEX_PAGE_IN_CACHE4K]=0;                                                                                         
+	page_record->index[INDEX_PAGE_IN_RAM2M]=0;                                                                                           
+	page_record->index[INDEX_PAGE_IN_CACHE2M]=0;
+	strcpy(page_record->page_name[INDEX_PAGE_IN_RAM4K],"page_in_ram4k");
+	strcpy(page_record->page_name[INDEX_PAGE_IN_CACHE4K],"page_in_cache4k");
+    strcpy(page_record->page_name[INDEX_PAGE_IN_CACHE4K],"page_in_ram2m");
+	strcpy(page_record->page_name[INDEX_PAGE_IN_CACHE4K],"page_in_cache2m");
+	return 0;
+}
+/* pid: qemu process id corresponding to a vm 
+ * buffer_add: userspace buffer address to store hash value
+ * flags:0 first time to hash
+ * flags:1 second time to hash
+ * */
+static int mainfun(vm_info_t *vm_info){
+	int pid=vm_info->pid;
+	unsigned long buffer_add=vm_info->mb.buffer_add;
+	int flags=vm_info->flags;
+	if(flags==1)goto hash_begin;
+		struct task_struct *tpro=0;
+		page_record=kmalloc(sizeof(PageRecord),GFP_KERNEL);
+		page_vset=kmalloc(sizeof(PageVaddrSet),GFP_KERNEL);
+		//printk("PageRecord size :%d\n",sizeof(PageRecord));
+		init_page_record(page_record,page_vset);
+		getTargetProcess(&tpro,pid);
+		if(tpro==NULL){
+			printk("find no process!\n");
+			return -1;
+		}
+		printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
+		walk_page_table(tpro,page_record);
+		/*hash every page and write to buffer_add*/
+hash_begin:
+	//trans_page_to_vadd(page_record,page_vset);
+	view_page_record(page_record);
+	//view_page_vadd(page_vset);
+	return 0;
+}
+
+/*export page content to file in userspace**/
+static int export_page_to_file(struct file *file,unsigned long page_vadd){
+
+	return 0;
+}
+/*talk to userspace*/
+#define CHEN_WALK 0xEF
+#define CHECK _IOR(CHEN_WALK,0x1,unsigned int)
+
+struct proc_dir_entry *p_chen=NULL;
+char entry_name[]="chen_walk";
+static long ad_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
+	vm_info_t  vm_info;
+	int ret=0;
+	char *str="hello,chenmeng\n";
+	switch(ioctl){
+		case CHECK:
+			if(ret=copy_from_user(&vm_info,(void *)arg,sizeof(vm_info_t))){
+				return ret;
+			}
+			printk("pid get from userspace:%d\n",vm_info.pid);
+			ret=copy_to_user((void *)vm_info.mb.buffer_add,str,strlen(str));
+			vm_info.mb.buffer_size=strlen(str);
+			if(ret){
+				printk("fail to write info to userspace\n");
+			}
+			ret=copy_to_user(arg,&vm_info,sizeof(vm_info_t));
+			if(ret){
+				printk("fail to update vm_info information\n");
+			}
+			//mainfun(&vm_info);
+			break;
+		default:
+			printk("unknown command!\n");
+			break;
+	}
+	return 0;
+}
+
+
+static long ad_compat_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg)
+{
+	return	ad_ioctl(filp,ioctl,arg);
+}
+static struct file_operations ad_fops={
+	.unlocked_ioctl=ad_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl=ad_compat_ioctl,
+#endif
+};
+
+struct proc_dir_entry* create_file_entry(void)
+{
+	p_chen=proc_create(entry_name,0,NULL,&ad_fops);
+	return p_chen; 
+}
+void del_file_entry(void)
+{
+	if(p_chen)
+		remove_proc_entry(entry_name,NULL);
+}
+
+void reclaim_memory(void){
+	if(page_record)
+		kfree(page_record);
+	if(page_vset)
+		kfree(page_vset);
+}
+
+
 static  __init int walk_init(void){
-	mainfun();
+	create_file_entry();
 	printk("init walk process\n");
 	return 0;
 }
 static  __exit void walk_exit(void){
+	reclaim_memory();
+	del_file_entry();
 	printk("exit exit process\n");
 }
 module_init(walk_init);
