@@ -16,6 +16,8 @@
 #include <linux/radix-tree.h>
 #include<linux/proc_fs.h>
 #include <linux/rcupdate.h>
+#include <linux/version.h>
+#include <linux/atomic.h>
 #include "./hashtest/Hash.h"
 #include "walk_process.h"
 /*we can get physics page belong to one process:
@@ -52,6 +54,7 @@ typedef struct _vm_info{
 #define INDEX_PAGE_IN_RAM2M   2
 #define INDEX_PAGE_IN_CACHE2M 3
 #define INDEX_COUNT 	      4
+#define PAGE_CACHE_COUNT 2048
 typedef struct _page_recoard{
 	struct page *page_in_ram4k[300];
     struct page *page_in_cache4k[100];
@@ -65,7 +68,7 @@ typedef struct _page_vaddr_record{
 	int index;
 }PageVaddrSet;
 typedef struct _page_cache{
-	struct page *page_cache[100];
+	struct page *page_cache[PAGE_CACHE_COUNT];
 	unsigned int index;
 }PageCache;
 u32 *page_hash;
@@ -143,10 +146,12 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 										i =page_record->index[INDEX_PAGE_IN_RAM4K];
 										page_record->page_in_ram4k[i]=page;
 										page_record->index[INDEX_PAGE_IN_RAM4K]++;
-									}else{
-										i =page_record->index[INDEX_PAGE_IN_CACHE4K];
-										page_record->page_in_cache4k[i]=page;
-										page_record->index[INDEX_PAGE_IN_CACHE4K]++;
+									}else{//cache only reserve page in swap cache not in file cache 
+										if(!pte_file(*pte)){
+											i =page_record->index[INDEX_PAGE_IN_CACHE4K];
+											page_record->page_in_cache4k[i]=page;
+											page_record->index[INDEX_PAGE_IN_CACHE4K]++;
+										}
 									}
 									count_4k++;
 								}
@@ -161,8 +166,12 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 								i =page_record->index[INDEX_PAGE_IN_RAM2M];
 								page_record->page_in_ram2m[i]=page;
 								page_record->index[INDEX_PAGE_IN_RAM2M]++;
-							}else{
-								i =page_record->index[INDEX_PAGE_IN_CACHE2M];                                                               							  page_record->page_in_cache2m[i]=page;                                                                       								page_record->index[INDEX_PAGE_IN_CACHE2M]++;                                                                     
+							}else{//cache only reserve page in swap cache not in file cache 
+								if(1){
+									i =page_record->index[INDEX_PAGE_IN_CACHE2M];  
+									page_record->page_in_cache2m[i]=page; 
+									page_record->index[INDEX_PAGE_IN_CACHE2M]++; 
+								}								
 							}
 							count_2m++;
 							/*record 2M size page*/
@@ -372,7 +381,7 @@ static int init_page_record(PageRecord *page_record,PageVaddrSet *page_vset){
 
 #define RADIX_TREE_TAG_LONGS	\
 		((RADIX_TREE_MAP_SIZE + BITS_PER_LONG - 1) / BITS_PER_LONG)
-
+#if LINUX_VERSION_CODE>= KERNEL_VERSION(3,10,1)
 struct radix_tree_node {
 	unsigned int	height;		/** Height from the bottom */
 	unsigned int	count;
@@ -383,6 +392,7 @@ struct radix_tree_node {
 	void __rcu	*slots[RADIX_TREE_MAP_SIZE];
 	unsigned long	tags[RADIX_TREE_MAX_TAGS][RADIX_TREE_TAG_LONGS];
 };
+#endif
 static inline void *indirect_to_ptr(void *ptr)
 {
 	return (void *)((unsigned long)ptr & ~RADIX_TREE_INDIRECT_PTR);
@@ -414,10 +424,14 @@ int walk_radix_tree(struct radix_tree_root *root,PageCache *page_cache){
 	int res=0;
 	void **results;
 	unsigned int max_items;
+	if(PAGE_CACHE_COUNT-page_cache->index<100){
+		printk("page cache memory is not enough\n");
+		return -1;
+	}
 	results=(page_cache->page_cache+page_cache->index);
 	max_items=maxindex(root->height);
 	printk("max_items:%d\n",max_items);
-//	res=radix_tree_gang_lookup(root,results,0,max_items);
+	res=radix_tree_gang_lookup(root,results,0,max_items);
 	page_cache->index+=res;
 	printk("total %d page\n",res);
 	return 0;
@@ -447,19 +461,41 @@ int get_page_cache_by_process(struct task_struct *task_temp,PageCache *page_cach
 	file_fd=file_set->fd_array;
 	fdt=file_set->fdt;
 	/*walk fd arrary*/
-	printk("max fds:%d\n",fdt->max_fds);
 	while(i<fdt->max_fds){
-		printk("fd %d ----%d\n",i,fd_is_open(i,fdt));
 		if(fd_is_open(i,fdt)){
 			temp_file=file_fd[i];
-			address_temp=(temp_file->f_mapping);
-			walk_radix_tree(&address_temp->page_tree,page_cache);
+			if(temp_file->f_mapping!=NULL){
+				address_temp=(temp_file->f_mapping);
+				walk_radix_tree(&address_temp->page_tree,page_cache);
+			}else{
+				printk("%d fd temp_file->f_mapping is NULL\n");
+			}
 		}
 		i++;
 	}
-	printk("%s has %d pages\n",task_temp->comm,page_cache->index);
 	return 0;
 }
+void view_page_cache(void){
+	int i,j=0,k=0;
+	struct page *temp_page;
+	int a;
+	for(i=0;i<page_cache->index;i++){
+		temp_page=page_cache->page_cache[i];
+		a=atomic_read(&temp_page->_mapcount);
+		if(a>=0)
+			j++;
+		else
+			k++;
+	}
+	printk("there are %d page in cache\n",page_cache->index);
+	printk("there are %d page mapped in page table\n",j);
+	printk("there are %d page not  mapping\n",k);
+}
+/*get page in memory but not in pagetable*/
+int get_page_not_maped(PageRecord *page_record){
+	return 0;
+}
+
 static int mainfun(vm_info_t *vm_info){
 	struct task_struct *tpro=0;
 	int pid=vm_info->pid;
@@ -469,6 +505,7 @@ static int mainfun(vm_info_t *vm_info){
 	page_record=kmalloc(sizeof(PageRecord),GFP_KERNEL);
 	page_vset=kmalloc(sizeof(PageVaddrSet),GFP_KERNEL);
 	page_cache=kmalloc(sizeof(PageCache),GFP_KERNEL);
+	page_cache->index=0;
 	//printk("PageRecord size :%d\n",sizeof(PageRecord));
 	init_page_record(page_record,page_vset);
 	getTargetProcess(&tpro,pid);
@@ -479,6 +516,7 @@ static int mainfun(vm_info_t *vm_info){
 	printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
 	walk_page_table(tpro,page_record);
 	get_page_cache_by_process(tpro,page_cache);
+	view_page_cache();
 	/*hash every page and write to buffer_add*/
     //get_page_hash_value(page_record);	
     //view_hash_value();

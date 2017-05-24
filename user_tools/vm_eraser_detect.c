@@ -223,7 +223,7 @@ void init_vm_info(VM_INFO *vm_info){
  * */
 int main_menu(virConnectPtr conn){
 	int vmid;
-	int pid=2831;
+	int pid=2884;
 	virDomainPtr dom=NULL;
 	char *dom_source;
 	list_domains(conn);
