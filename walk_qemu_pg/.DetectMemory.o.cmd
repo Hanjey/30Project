@@ -1,0 +1,1 @@
+cmd_/root/code/30Project/walk_qemu_pg/DetectMemory.o := ld -m elf_x86_64   -r -o /root/code/30Project/walk_qemu_pg/DetectMemory.o /root/code/30Project/walk_qemu_pg/walk_process.o /root/code/30Project/walk_qemu_pg/./hashtest/Hash.o 

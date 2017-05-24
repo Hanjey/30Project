@@ -1,8 +1,9 @@
-cmd_/root/code/30Project/walk_qemu_pg/walk_process.o := gcc -Wp,-MD,/root/code/30Project/walk_qemu_pg/.walk_process.o.d  -nostdinc -isystem /usr/lib/gcc/x86_64-linux-gnu/4.8/include  -I/usr/src/linux-headers-3.13.0-24-generic/arch/x86/include -Iarch/x86/include/generated  -Iinclude -I/usr/src/linux-headers-3.13.0-24-generic/arch/x86/include/uapi -Iarch/x86/include/generated/uapi -I/usr/src/linux-headers-3.13.0-24-generic/include/uapi -Iinclude/generated/uapi -include /usr/src/linux-headers-3.13.0-24-generic/include/linux/kconfig.h -Iubuntu/include  -D__KERNEL__ -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs -fno-strict-aliasing -fno-common -Werror-implicit-function-declaration -Wno-format-security -fno-delete-null-pointer-checks -O2 -m64 -mno-mmx -mno-sse -mpreferred-stack-boundary=3 -mtune=generic -mno-red-zone -mcmodel=kernel -funit-at-a-time -maccumulate-outgoing-args -fstack-protector -DCONFIG_X86_X32_ABI -DCONFIG_AS_CFI=1 -DCONFIG_AS_CFI_SIGNAL_FRAME=1 -DCONFIG_AS_CFI_SECTIONS=1 -DCONFIG_AS_FXSAVEQ=1 -DCONFIG_AS_AVX=1 -DCONFIG_AS_AVX2=1 -pipe -Wno-sign-compare -fno-asynchronous-unwind-tables -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -Wframe-larger-than=1024 -Wno-unused-but-set-variable -fno-omit-frame-pointer -fno-optimize-sibling-calls -pg -mfentry -DCC_USING_FENTRY -Wdeclaration-after-statement -Wno-pointer-sign -fno-strict-overflow -fconserve-stack -Werror=implicit-int -Werror=strict-prototypes -DCC_HAVE_ASM_GOTO  -DMODULE  -D"KBUILD_STR(s)=\#s" -D"KBUILD_BASENAME=KBUILD_STR(walk_process)"  -D"KBUILD_MODNAME=KBUILD_STR(walk_process)" -c -o /root/code/30Project/walk_qemu_pg/.tmp_walk_process.o /root/code/30Project/walk_qemu_pg/walk_process.c
+cmd_/root/code/30Project/walk_qemu_pg/walk_process.o := gcc -Wp,-MD,/root/code/30Project/walk_qemu_pg/.walk_process.o.d  -nostdinc -isystem /usr/lib/gcc/x86_64-linux-gnu/4.8/include  -I/usr/src/linux-headers-3.13.0-24-generic/arch/x86/include -Iarch/x86/include/generated  -Iinclude -I/usr/src/linux-headers-3.13.0-24-generic/arch/x86/include/uapi -Iarch/x86/include/generated/uapi -I/usr/src/linux-headers-3.13.0-24-generic/include/uapi -Iinclude/generated/uapi -include /usr/src/linux-headers-3.13.0-24-generic/include/linux/kconfig.h -Iubuntu/include  -D__KERNEL__ -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs -fno-strict-aliasing -fno-common -Werror-implicit-function-declaration -Wno-format-security -fno-delete-null-pointer-checks -O2 -m64 -mno-mmx -mno-sse -mpreferred-stack-boundary=3 -mtune=generic -mno-red-zone -mcmodel=kernel -funit-at-a-time -maccumulate-outgoing-args -fstack-protector -DCONFIG_X86_X32_ABI -DCONFIG_AS_CFI=1 -DCONFIG_AS_CFI_SIGNAL_FRAME=1 -DCONFIG_AS_CFI_SECTIONS=1 -DCONFIG_AS_FXSAVEQ=1 -DCONFIG_AS_AVX=1 -DCONFIG_AS_AVX2=1 -pipe -Wno-sign-compare -fno-asynchronous-unwind-tables -mno-sse -mno-mmx -mno-sse2 -mno-3dnow -mno-avx -Wframe-larger-than=1024 -Wno-unused-but-set-variable -fno-omit-frame-pointer -fno-optimize-sibling-calls -pg -mfentry -DCC_USING_FENTRY -Wdeclaration-after-statement -Wno-pointer-sign -fno-strict-overflow -fconserve-stack -Werror=implicit-int -Werror=strict-prototypes -DCC_HAVE_ASM_GOTO  -DMODULE  -D"KBUILD_STR(s)=\#s" -D"KBUILD_BASENAME=KBUILD_STR(walk_process)"  -D"KBUILD_MODNAME=KBUILD_STR(DetectMemory)" -c -o /root/code/30Project/walk_qemu_pg/.tmp_walk_process.o /root/code/30Project/walk_qemu_pg/walk_process.c
 
 source_/root/code/30Project/walk_qemu_pg/walk_process.o := /root/code/30Project/walk_qemu_pg/walk_process.c
 
 deps_/root/code/30Project/walk_qemu_pg/walk_process.o := \
+    $(wildcard include/config/base/small.h) \
     $(wildcard include/config/compat.h) \
   include/linux/kernel.h \
     $(wildcard include/config/lbdaf.h) \
@@ -180,7 +181,6 @@ deps_/root/code/30Project/walk_qemu_pg/walk_process.o := \
   include/asm-generic/percpu.h \
     $(wildcard include/config/have/setup/per/cpu/area.h) \
   include/linux/threads.h \
-    $(wildcard include/config/base/small.h) \
   include/linux/percpu-defs.h \
     $(wildcard include/config/debug/force/weak/per/cpu.h) \
   include/linux/thread_info.h \
@@ -837,7 +837,9 @@ deps_/root/code/30Project/walk_qemu_pg/walk_process.o := \
   include/asm-generic/cacheflush.h \
   include/linux/hugetlb_inline.h \
   include/linux/rmap.h \
+  include/linux/fdtable.h \
   include/linux/proc_fs.h \
+  /root/code/30Project/walk_qemu_pg/./hashtest/Hash.h \
   /root/code/30Project/walk_qemu_pg/walk_process.h \
 
 /root/code/30Project/walk_qemu_pg/walk_process.o: $(deps_/root/code/30Project/walk_qemu_pg/walk_process.o)

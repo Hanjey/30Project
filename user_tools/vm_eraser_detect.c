@@ -101,14 +101,6 @@ char *get_vm_image_path(virConnectPtr conn,virDomainPtr dom){
 	xmlChar *device;
 	xmlChar *source_path=NULL;
 	int size;
-	/*if(virDomainSave(dom,filepath)==-1){
-		printf("failed to save vm state\n");
-		goto error_code;
-	}
-	if(virDomainRestore(conn,filepath)==-1){
-		printf("failed to restore vm state\n");
-		goto error_code;
-	}*/
 	xml_desc=virDomainGetXMLDesc(dom,VIR_DOMAIN_XML_SECURE);
 	size=strlen(xml_desc);
 	pdoc=xmlParseMemory(xml_desc,size);
@@ -151,7 +143,7 @@ get_it:
 		printf("source_path:%s\n",source_path);
 	}
 	//printf("vm-xml-desc:%s\n",xml_desc);
-	return xml_desc;
+	return source_path;
 	/*resolve xml_desc to get image path*/
 error_code:
 	return NULL;
@@ -179,6 +171,45 @@ int list_domains(virConnectPtr conn){
 	}
 	return 0;
 }
+
+
+/*thread fun to save/restore VM*/
+void  save_vm_state(virDomainPtr dom,char *imagepath){
+	virDomainInfoPtr info;
+	if(!dom){
+		printf("error, can not find guest to be saved!\n");
+		return;
+	}
+	if(virDomainGetInfo(dom,info)<0){
+		printf("error,can not check vm state\n");
+		return;
+	}
+	if(info->state==VIR_DOMAIN_SHUTOFF){
+		printf("not saving guest that is not running\n");
+		return;
+	}
+	if(virDomainSave(dom,imagepath)<0){
+		printf("ubable to save guest to %s\n",imagepath);
+		return;
+	}
+	printf("guest state saved to %s\n",imagepath);
+}
+
+/*suspend/resume*/
+int suspend_vm_state(virDomainPtr dom){
+	if(virDomainSuspend(dom)<0){
+		printf("error,can not suspend vm state\n");
+		return;
+	}
+	return 0;
+}
+int resume_vm_state(virDomainPtr dom){
+	if(virDomainResume(dom)<0){
+		printf("error,can not resume vm state\n");
+		return -1;	
+	}
+	return 0;
+}
 void init_vm_info(VM_INFO *vm_info){
 	vm_info->flags=0;
 	vm_info->mb.buffer_add=malloc(4096);
@@ -192,28 +223,34 @@ void init_vm_info(VM_INFO *vm_info){
  * */
 int main_menu(virConnectPtr conn){
 	int vmid;
-	int pid=1234;
+	int pid=2831;
 	virDomainPtr dom=NULL;
-	char *xml_desc;
+	char *dom_source;
 	list_domains(conn);
 	printf("1.chose one virtual mechine,input vm id\n");
 	scanf("%d",&vmid);
 	/*transfer vmid to qemu process Id*/
-	dom=virDomainLookupByID(conn,vmid);
+/*	dom=virDomainLookupByID(conn,vmid);
 	if(dom==NULL){
 		printf("can not find %d vm\n",vmid);
 		goto error_code;
 	}
-	xml_desc=get_vm_image_path(conn,dom);
-	if(xml_desc==NULL){
+	dom_source=get_vm_image_path(conn,dom);
+	if(dom_source==NULL){
 		printf("can not get vm xml desc\n");
 		goto error_code;
 	}
-
-	/*VM_INFO vm_info;
+	suspend_vm_state(dom);
+	int i;
+	for( i=0;i<10;i++){
+		printf("sleep %d s\n",i);
+		sleep(1);
+	}
+ 	resume_vm_state(dom);	*/
+	VM_INFO vm_info;
 	vm_info.pid=pid;
 	init_vm_info(&vm_info);
-	beginDetect(&vm_info);*/
+	beginDetect(&vm_info);
 error_code:
 	return 0;
 }

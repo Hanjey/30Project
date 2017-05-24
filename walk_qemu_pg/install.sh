@@ -1,2 +1,2 @@
 #/bash/sh
-insmod walk_process.ko
+insmod DetectMemory.ko

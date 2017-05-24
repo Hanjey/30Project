@@ -10,8 +10,13 @@
 #include <linux/pagemap.h>
 #include <linux/rmap.h>
 #include <linux/file.h>
-
+#include <linux/fs.h>
+#include <linux/fdtable.h>
+#include <uapi/linux/sched.h>
+#include <linux/radix-tree.h>
 #include<linux/proc_fs.h>
+#include <linux/rcupdate.h>
+#include "./hashtest/Hash.h"
 #include "walk_process.h"
 /*we can get physics page belong to one process:
  * 1、pagetable
@@ -59,7 +64,13 @@ typedef struct _page_vaddr_record{
 	unsigned long pvaddr[500];
 	int index;
 }PageVaddrSet;
-
+typedef struct _page_cache{
+	struct page *page_cache[100];
+	unsigned int index;
+}PageCache;
+u32 *page_hash;
+PageCache *page_cache;
+int page_num;
 PageRecord *page_record;
 PageVaddrSet *page_vset;
 #define long_to_pfn(val) val>>12
@@ -189,6 +200,44 @@ static inline int PageAnon(struct page *page)
 		return ((unsigned long)page->mapping & PAGE_MAPPING_ANON) != 0;
 }
 */
+static int get_page_hash_value(PageRecord *p_record){
+	int j=0;
+	int i=0;
+	struct page *temp_page;
+	page_num=page_record->index[INDEX_PAGE_IN_RAM4K]+page_record->index[INDEX_PAGE_IN_CACHE4K]+page_record->index[INDEX_PAGE_IN_RAM2M]+page_record->index[INDEX_PAGE_IN_RAM2M]+page_record->index[INDEX_PAGE_IN_RAM2M];
+	if(page_num<=0)
+		return -1;
+	page_hash=(u32 *)kmalloc(page_num*sizeof(u32),GFP_KERNEL);	
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM4K];j++){
+		temp_page=page_record->page_in_ram4k[j];
+		page_hash[i++]=calc_check_num(temp_page);
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE4K];j++){
+		temp_page=page_record->page_in_cache4k[j];
+        page_hash[i++]=calc_check_num(temp_page);
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM2M];j++){
+		temp_page=page_record->page_in_ram2m[j];
+		page_hash[i++]=calc_check_num(temp_page);
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE2M];j++){
+		temp_page=page_record->page_in_cache2m[j];
+		page_hash[i++]=calc_check_num(temp_page);
+	}
+	return 0;
+}
+/*view_hash_value*/
+static int view_hash_value(void){
+	int i=0;
+	if(page_hash==NULL){
+		printk("page hash is NULL\n");
+		return -1;
+	}
+	while(i<page_num){
+		printk("%08x\n",page_hash[i]);
+		i++;
+	}
+}
 /*view page record information*/
 static int view_page_record(PageRecord *p_record){
 	int j=0;
@@ -201,7 +250,7 @@ static int view_page_record(PageRecord *p_record){
 	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM2M];j++){     
 	    printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_RAM2M],page_record->page_in_ram2m[j]);
 	}
-	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM2M];j++){     
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE2M];j++){     
 	    printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_CACHE2M],page_record->page_in_cache2m[j]);
 	}
 	return 0;
@@ -297,8 +346,7 @@ static int init_page_record(PageRecord *page_record,PageVaddrSet *page_vset){
 	memset(page_record,0,sizeof(PageRecord));
 	memset(page_vset,0,sizeof(PageVaddrSet));
 	page_vset->index=0;
-	page_record->index[INDEX_PAGE_IN_RAM4K]=0;                                                                                           
-	page_record->index[INDEX_PAGE_IN_CACHE4K]=0;                                                                                         
+	page_record->index[INDEX_PAGE_IN_RAM4K]=0;                                      page_record->index[INDEX_PAGE_IN_CACHE4K]=0;                                                                                         
 	page_record->index[INDEX_PAGE_IN_RAM2M]=0;                                                                                           
 	page_record->index[INDEX_PAGE_IN_CACHE2M]=0;
 	strcpy(page_record->page_name[INDEX_PAGE_IN_RAM4K],"page_in_ram4k");
@@ -307,39 +355,143 @@ static int init_page_record(PageRecord *page_record,PageVaddrSet *page_vset){
 	strcpy(page_record->page_name[INDEX_PAGE_IN_CACHE4K],"page_in_cache2m");
 	return 0;
 }
-/* pid: qemu process id corresponding to a vm 
+/* 
+ * id: qemu process id corresponding to a vm 
  * buffer_add: userspace buffer address to store hash value
  * flags:0 first time to hash
  * flags:1 second time to hash
  * */
+#ifdef __KERNEL__
+#define RADIX_TREE_MAP_SHIFT	(CONFIG_BASE_SMALL ? 4 : 6)
+#else
+#define RADIX_TREE_MAP_SHIFT	3	/** For more stressful testing */
+#endif
+
+#define RADIX_TREE_MAP_SIZE	(1UL << RADIX_TREE_MAP_SHIFT)
+#define RADIX_TREE_MAP_MASK	(RADIX_TREE_MAP_SIZE-1)
+
+#define RADIX_TREE_TAG_LONGS	\
+		((RADIX_TREE_MAP_SIZE + BITS_PER_LONG - 1) / BITS_PER_LONG)
+
+struct radix_tree_node {
+	unsigned int	height;		/** Height from the bottom */
+	unsigned int	count;
+	union {
+		struct radix_tree_node *parent;	/** Used when ascending tree */
+		struct rcu_head	rcu_head;	/** Used when freeing node */
+	};
+	void __rcu	*slots[RADIX_TREE_MAP_SIZE];
+	unsigned long	tags[RADIX_TREE_MAX_TAGS][RADIX_TREE_TAG_LONGS];
+};
+static inline void *indirect_to_ptr(void *ptr)
+{
+	return (void *)((unsigned long)ptr & ~RADIX_TREE_INDIRECT_PTR);
+}
+
+/*walk radix tree*/
+struct page *trans_slot_to_page(void **pagep){
+	struct page *page_temp;
+	page_temp = radix_tree_deref_slot(pagep);
+	return page_temp;
+}
+/*max item according to the specific height*/
+#define RADIX_TREE_INDEX_BITS  (8 /** CHAR_BIT */ * sizeof(unsigned long))
+static __init unsigned long maxindex(unsigned int height)
+{
+	unsigned int width = height * RADIX_TREE_MAP_SHIFT;
+	int shift = RADIX_TREE_INDEX_BITS - width;
+
+	if (shift < 0)
+				return ~0UL;
+		if (shift >= BITS_PER_LONG)
+					return 0UL;
+			return ~0UL >> shift;
+}
+
+int walk_radix_tree(struct radix_tree_root *root,PageCache *page_cache){
+//	unsigned long page_cache[100];
+	//int i=0,j=0;
+	int res=0;
+	void **results;
+	unsigned int max_items;
+	results=(page_cache->page_cache+page_cache->index);
+	max_items=maxindex(root->height);
+	printk("max_items:%d\n",max_items);
+//	res=radix_tree_gang_lookup(root,results,0,max_items);
+	page_cache->index+=res;
+	printk("total %d page\n",res);
+	return 0;
+}
+/*test bit n is 1*/
+#define SHIFT 6
+#define MASK 0x3f
+
+
+int chen_test_bit(const unsigned long *vaddr,int size,int offset){
+	const unsigned long *p = vaddr + (offset >> SHIFT);
+	int bit = offset & MASK, res;	
+	if (offset >= size)
+		return 0;
+	res=*p&(1<<bit);
+	return res;
+}
+/*get other page without in pagetbale*/
+int get_page_cache_by_process(struct task_struct *task_temp,PageCache *page_cache){
+	struct files_struct *file_set;
+	struct fdtable *fdt;
+    struct file *temp_file;
+	struct file **file_fd;
+	struct address_space *address_temp;
+	int i=0;
+	file_set=task_temp->files;
+	file_fd=file_set->fd_array;
+	fdt=file_set->fdt;
+	/*walk fd arrary*/
+	printk("max fds:%d\n",fdt->max_fds);
+	while(i<fdt->max_fds){
+		printk("fd %d ----%d\n",i,fd_is_open(i,fdt));
+		if(fd_is_open(i,fdt)){
+			temp_file=file_fd[i];
+			address_temp=(temp_file->f_mapping);
+			walk_radix_tree(&address_temp->page_tree,page_cache);
+		}
+		i++;
+	}
+	printk("%s has %d pages\n",task_temp->comm,page_cache->index);
+	return 0;
+}
 static int mainfun(vm_info_t *vm_info){
+	struct task_struct *tpro=0;
 	int pid=vm_info->pid;
 	unsigned long buffer_add=vm_info->mb.buffer_add;
 	int flags=vm_info->flags;
 	if(flags==1)goto hash_begin;
-		struct task_struct *tpro=0;
-		page_record=kmalloc(sizeof(PageRecord),GFP_KERNEL);
-		page_vset=kmalloc(sizeof(PageVaddrSet),GFP_KERNEL);
-		//printk("PageRecord size :%d\n",sizeof(PageRecord));
-		init_page_record(page_record,page_vset);
-		getTargetProcess(&tpro,pid);
-		if(tpro==NULL){
-			printk("find no process!\n");
-			return -1;
-		}
-		printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
-		walk_page_table(tpro,page_record);
-		/*hash every page and write to buffer_add*/
+	page_record=kmalloc(sizeof(PageRecord),GFP_KERNEL);
+	page_vset=kmalloc(sizeof(PageVaddrSet),GFP_KERNEL);
+	page_cache=kmalloc(sizeof(PageCache),GFP_KERNEL);
+	//printk("PageRecord size :%d\n",sizeof(PageRecord));
+	init_page_record(page_record,page_vset);
+	getTargetProcess(&tpro,pid);
+	if(tpro==NULL){
+		printk("find no process!\n");
+		return -1;
+	}
+	printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
+	walk_page_table(tpro,page_record);
+	get_page_cache_by_process(tpro,page_cache);
+	/*hash every page and write to buffer_add*/
+    //get_page_hash_value(page_record);	
+    //view_hash_value();
 hash_begin:
 	//trans_page_to_vadd(page_record,page_vset);
-	view_page_record(page_record);
+//	view_page_record(page_record);
 	//view_page_vadd(page_vset);
 	return 0;
 }
 
 /*export page content to file in userspace**/
 static int export_page_to_file(struct file *file,unsigned long page_vadd){
-
+	
 	return 0;
 }
 /*talk to userspace*/
@@ -348,7 +500,7 @@ static int export_page_to_file(struct file *file,unsigned long page_vadd){
 
 struct proc_dir_entry *p_chen=NULL;
 char entry_name[]="chen_walk";
-static long ad_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
+static long chen_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 	vm_info_t  vm_info;
 	int ret=0;
 	char *str="hello,chenmeng\n";
@@ -357,6 +509,7 @@ static long ad_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 			if(ret=copy_from_user(&vm_info,(void *)arg,sizeof(vm_info_t))){
 				return ret;
 			}
+			mainfun(&vm_info);
 			printk("pid get from userspace:%d\n",vm_info.pid);
 			ret=copy_to_user((void *)vm_info.mb.buffer_add,str,strlen(str));
 			vm_info.mb.buffer_size=strlen(str);
@@ -367,7 +520,6 @@ static long ad_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 			if(ret){
 				printk("fail to update vm_info information\n");
 			}
-			//mainfun(&vm_info);
 			break;
 		default:
 			printk("unknown command!\n");
@@ -377,14 +529,14 @@ static long ad_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 }
 
 
-static long ad_compat_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg)
+static long chen_compat_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg)
 {
-	return	ad_ioctl(filp,ioctl,arg);
+	return	chen_ioctl(filp,ioctl,arg);
 }
 static struct file_operations ad_fops={
-	.unlocked_ioctl=ad_ioctl,
+	.unlocked_ioctl=chen_ioctl,
 #ifdef CONFIG_COMPAT
-	.compat_ioctl=ad_compat_ioctl,
+	.compat_ioctl=chen_compat_ioctl,
 #endif
 };
 
@@ -404,6 +556,12 @@ void reclaim_memory(void){
 		kfree(page_record);
 	if(page_vset)
 		kfree(page_vset);
+	if(page_hash){
+		kfree(page_hash);
+	}
+	if(page_cache){
+		kfree(page_cache);
+	}
 }
 
 

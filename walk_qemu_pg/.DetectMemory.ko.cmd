@@ -1,0 +1,1 @@
+cmd_/root/code/30Project/walk_qemu_pg/DetectMemory.ko := ld -r -m elf_x86_64 -T /usr/src/linux-headers-3.13.0-24-generic/scripts/module-common.lds --build-id  -o /root/code/30Project/walk_qemu_pg/DetectMemory.ko /root/code/30Project/walk_qemu_pg/DetectMemory.o /root/code/30Project/walk_qemu_pg/DetectMemory.mod.o

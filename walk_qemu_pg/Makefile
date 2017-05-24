@@ -1,4 +1,5 @@
-obj-m:=walk_process.o  
+obj-m+=DetectMemory.o  
+DetectMemory-objs:=walk_process.o ./hashtest/Hash.o
 
 KDIR:=/lib/modules/$(shell uname -r)/build
 PWD:=$(shell pwd)
