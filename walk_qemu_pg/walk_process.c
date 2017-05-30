@@ -71,7 +71,7 @@ typedef struct _page_cache{
 	struct page *page_cache[PAGE_CACHE_COUNT];
 	unsigned int index;
 }PageCache;
-u32 *page_hash;
+char *page_hash;
 PageCache *page_cache;
 int page_num;
 PageRecord *page_record;
@@ -147,7 +147,7 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 										page_record->page_in_ram4k[i]=page;
 										page_record->index[INDEX_PAGE_IN_RAM4K]++;
 									}else{//cache only reserve page in swap cache not in file cache 
-										if(!pte_file(*pte)){
+										if(1){
 											i =page_record->index[INDEX_PAGE_IN_CACHE4K];
 											page_record->page_in_cache4k[i]=page;
 											page_record->index[INDEX_PAGE_IN_CACHE4K]++;
@@ -213,26 +213,36 @@ static int get_page_hash_value(PageRecord *p_record){
 	int j=0;
 	int i=0;
 	struct page *temp_page;
+	u32 hash_temp;
+	char str[9];
 	page_num=page_record->index[INDEX_PAGE_IN_RAM4K]+page_record->index[INDEX_PAGE_IN_CACHE4K]+page_record->index[INDEX_PAGE_IN_RAM2M]+page_record->index[INDEX_PAGE_IN_RAM2M]+page_record->index[INDEX_PAGE_IN_RAM2M];
 	if(page_num<=0)
 		return -1;
-	page_hash=(u32 *)kmalloc(page_num*sizeof(u32),GFP_KERNEL);	
+	/*in fact it is a 2 ventor array*/
+	page_hash=(char *)kmalloc(page_num*9,GFP_KERNEL);
+	memset(page_hash,0,page_num*9);	
 	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM4K];j++){
 		temp_page=page_record->page_in_ram4k[j];
-		page_hash[i++]=calc_check_num(temp_page);
+		hash_temp=calc_check_num(temp_page);
+		printk("hash value:%08x\n",hash_temp);
+		sprintf(page_hash+i,"%08x",hash_temp);
+	//	printk("%s\n",(char *)(page_hash+i));
+		i+=9;
 	}
-	for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE4K];j++){
+/*for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE4K];j++){
 		temp_page=page_record->page_in_cache4k[j];
         page_hash[i++]=calc_check_num(temp_page);
-	}
+	}*/
 	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM2M];j++){
 		temp_page=page_record->page_in_ram2m[j];
-		page_hash[i++]=calc_check_num(temp_page);
+		hash_temp=calc_check_num(temp_page);
+		sprintf(page_hash+i,"%08x",hash_temp);
+		i+=8;
 	}
-	for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE2M];j++){
+	/*for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE2M];j++){
 		temp_page=page_record->page_in_cache2m[j];
 		page_hash[i++]=calc_check_num(temp_page);
-	}
+	}*/
 	return 0;
 }
 /*view_hash_value*/
@@ -301,6 +311,7 @@ static unsigned int trans_page_vadd_file(struct page *page){
 	return address;
 }
 /*check if unmapping page existed in swap cache or page cache*/
+
 static int check_page_cache(pte_t *un_map_ptes,int page_num){
 	struct page *found_page=NULL;
 	unsigned long found_pfn;
@@ -355,7 +366,8 @@ static int init_page_record(PageRecord *page_record,PageVaddrSet *page_vset){
 	memset(page_record,0,sizeof(PageRecord));
 	memset(page_vset,0,sizeof(PageVaddrSet));
 	page_vset->index=0;
-	page_record->index[INDEX_PAGE_IN_RAM4K]=0;                                      page_record->index[INDEX_PAGE_IN_CACHE4K]=0;                                                                                         
+	page_record->index[INDEX_PAGE_IN_RAM4K]=0;                        
+	page_record->index[INDEX_PAGE_IN_CACHE4K]=0;                                                                                         
 	page_record->index[INDEX_PAGE_IN_RAM2M]=0;                                                                                           
 	page_record->index[INDEX_PAGE_IN_CACHE2M]=0;
 	strcpy(page_record->page_name[INDEX_PAGE_IN_RAM4K],"page_in_ram4k");
@@ -515,10 +527,10 @@ static int mainfun(vm_info_t *vm_info){
 	}
 	printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
 	walk_page_table(tpro,page_record);
-	get_page_cache_by_process(tpro,page_cache);
-	view_page_cache();
+//	get_page_cache_by_process(tpro,page_cache);
+//	view_page_cache();
 	/*hash every page and write to buffer_add*/
-    //get_page_hash_value(page_record);	
+    get_page_hash_value(page_record);	
     //view_hash_value();
 hash_begin:
 	//trans_page_to_vadd(page_record,page_vset);
@@ -532,6 +544,8 @@ static int export_page_to_file(struct file *file,unsigned long page_vadd){
 	
 	return 0;
 }
+
+void reclaim_memory(void);
 /*talk to userspace*/
 #define CHEN_WALK 0xEF
 #define CHECK _IOR(CHEN_WALK,0x1,unsigned int)
@@ -541,7 +555,6 @@ char entry_name[]="chen_walk";
 static long chen_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 	vm_info_t  vm_info;
 	int ret=0;
-	char *str="hello,chenmeng\n";
 	switch(ioctl){
 		case CHECK:
 			if(ret=copy_from_user(&vm_info,(void *)arg,sizeof(vm_info_t))){
@@ -549,8 +562,10 @@ static long chen_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 			}
 			mainfun(&vm_info);
 			printk("pid get from userspace:%d\n",vm_info.pid);
-			ret=copy_to_user((void *)vm_info.mb.buffer_add,str,strlen(str));
-			vm_info.mb.buffer_size=strlen(str);
+			printk("buffer_add get from userspace:%p\n",vm_info.mb.buffer_add);
+			ret=copy_to_user((void *)vm_info.mb.buffer_add,(void *)page_hash,page_num*9);
+			printk("page_num:%d\n",page_num);
+			vm_info.mb.buffer_size=page_num*9;
 			if(ret){
 				printk("fail to write info to userspace\n");
 			}
@@ -558,6 +573,7 @@ static long chen_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 			if(ret){
 				printk("fail to update vm_info information\n");
 			}
+			reclaim_memory();
 			break;
 		default:
 			printk("unknown command!\n");
@@ -590,6 +606,7 @@ void del_file_entry(void)
 }
 
 void reclaim_memory(void){
+	page_num=0;
 	if(page_record)
 		kfree(page_record);
 	if(page_vset)

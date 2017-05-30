@@ -31,11 +31,14 @@ typedef struct vm_info{
 	struct memory_block mb;
 	int flags;
 }VM_INFO;
+
+VM_INFO vm_info;
 /*talk to walk_processs module*/
 #define CHEN_WALK 0xEF
 #define CHECK _IOR(CHEN_WALK,0x1,unsigned int)
 #define FILE_ORIGAL "/root/temp/first.txt"
 #define FILE_SECOND "/root/temp/second.txt"
+/*file name can be a random num*/
 int write_buffer_to_file(void  *buffer_add,int flags,int size){
 	int fd;
 	int ret=0;
@@ -59,24 +62,24 @@ int write_buffer_to_file(void  *buffer_add,int flags,int size){
 	return 0;
 }
 /*send instruction to kernel*/
-int beginDetect(VM_INFO *vm_info){
+int beginDetect(){
 	int ret;
 	int fd;
+	printf("vm_info.size:%d\n",vm_info.mb.buffer_size);
 	fd=open("/proc/chen_walk",0);
 	if(fd<0){
 		printf("error open proc file\n");
 		return -1;
 	}
-	ret=ioctl(fd,CHECK,vm_info);
+	ret=ioctl(fd,CHECK,&vm_info);
+	printf("vm_info.size:%d\n",vm_info.mb.buffer_size);
 	if(ret!=0){//normal
 		printf("ioctl error\n");
 		goto error;
 	}
-	write_buffer_to_file(vm_info->mb.buffer_add,vm_info->flags,vm_info->mb.buffer_size);
-error:
 	close(fd);
-	if(vm_info->mb.buffer_add)
-		free(vm_info->mb.buffer_add);
+	write_buffer_to_file(vm_info.mb.buffer_add,vm_info.flags,vm_info.mb.buffer_size);
+error:
 	return 0;
 }
 /*<devices>
@@ -210,10 +213,10 @@ int resume_vm_state(virDomainPtr dom){
 	}
 	return 0;
 }
-void init_vm_info(VM_INFO *vm_info){
-	vm_info->flags=0;
-	vm_info->mb.buffer_add=malloc(4096);
-	vm_info->mb.buffer_size=4096;
+void init_vm_info(){
+	vm_info.flags=0;
+	vm_info.mb.buffer_add=malloc(4096);
+	vm_info.mb.buffer_size=4096;
 }
 /* first start a thread to call a fun while function includes:
  * 1.call libvirt API to suspend vitual mechine,then thread sleep waitting for a signal
@@ -223,7 +226,7 @@ void init_vm_info(VM_INFO *vm_info){
  * */
 int main_menu(virConnectPtr conn){
 	int vmid;
-	int pid=2884;
+	int pid=854;
 	virDomainPtr dom=NULL;
 	char *dom_source;
 	list_domains(conn);
@@ -247,10 +250,10 @@ int main_menu(virConnectPtr conn){
 		sleep(1);
 	}
  	resume_vm_state(dom);	*/
-	VM_INFO vm_info;
+	//VM_INFO vm_info;
 	vm_info.pid=pid;
-	init_vm_info(&vm_info);
-	beginDetect(&vm_info);
+	init_vm_info();
+	beginDetect();
 error_code:
 	return 0;
 }
@@ -265,6 +268,8 @@ int main(int argc,char *argv[]){
 	}
 	main_menu(conn);
 	virConnectClose(conn);
+	if(vm_info.mb.buffer_add)
+		free(vm_info.mb.buffer_add);
 	return 0;
 }
 

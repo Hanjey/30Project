@@ -839,6 +839,7 @@ deps_/root/code/30Project/walk_qemu_pg/walk_process.o := \
   include/linux/rmap.h \
   include/linux/fdtable.h \
   include/linux/proc_fs.h \
+  include/generated/uapi/linux/version.h \
   /root/code/30Project/walk_qemu_pg/./hashtest/Hash.h \
   /root/code/30Project/walk_qemu_pg/walk_process.h \
 
