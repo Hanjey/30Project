@@ -76,6 +76,11 @@ PageCache *page_cache;
 int page_num;
 PageRecord *page_record;
 PageVaddrSet *page_vset;
+typedef struct pthreads_p{
+	struct task_struct *pthreads_p[64];
+	unsigned char index;
+}Pthreads_p;
+Pthreads_p pthreads;
 #define long_to_pfn(val) val>>12
 /*get target process struct  by pid*/
 static int getTargetProcess(struct task_struct **tprocess,int pid){
@@ -93,6 +98,17 @@ static int getTargetProcess(struct task_struct **tprocess,int pid){
                 // printk("%5d----------%s\n",p->pid,p->comm);
          }
 	printk("<0> process count:%d\n",count);
+	return 0;
+}
+static int getProcessThreads(struct task_struct *tprocess){
+	pthreads.index=0;
+	struct list_head *pos;
+	struct task_struct *p;
+	list_for_each(pos,&tprocess->thread_group){
+        p=list_entry(pos,struct task_struct,thread_group);
+		pthreads.pthreads_p[pthreads.index++]=p;
+		printk("thread id :%d\n",p->pid);
+	}
 	return 0;
 }
 /*walk all page table*/
@@ -121,24 +137,24 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 		return -1;
 	pgd=p->mm->pgd;
 	printk("page table base:%p\n",pgd);
-	while(count_pg<511){
+	while(count_pg<512){
 		if(!pgd_none(*pgd)){
-			printk("pgd:%lu\n",pgd_val(*pgd));
+		//	printk("pgd:%lu\n",pgd_val(*pgd));
 			pud=(pud_t *)pgd_page_vaddr(*pgd);
 			/*walk for one pgd*/
-			while(count_pu<511){
+			while(count_pu<512){
 			//	pud=(pud_t *)pgd_page_vaddr(*pgd_temp);
 				if((!pud_none(*pud))){
-					printk("pud:%lu\n",pud_val(*pud));
+					//printk("pud:%lu\n",pud_val(*pud));
 					pmd=(pmd_t *)pud_page_vaddr(*pud);
 					/*walk for one pud*/
-					while(count_pm<511){
+					while(count_pm<512){
 					//	pmd=(pmd_t *)pud_page_vaddr(*pud_temp);
-						if((!pmd_none(*pmd))&&(!pmd_large(*pmd))){
-							printk("pmd:%lu\n",pmd_val(*pmd));
+						if((!pmd_none(*pmd))&&(!pmd_trans_huge(*pmd))){
+							//printk("pmd:%lu\n",pmd_val(*pmd));
 							pte=(pte_t *)page_address(pmd_page(*(pmd)));
 							/*walk for one pmd*/
-							while(count_pt<511){
+							while(count_pt<512){
 							 //	pte=(pte_t *)page_address(pmd_page(*(pmd)));
 								if((!pte_none(*pte))){
 									page=pte_page(*pte);
@@ -160,7 +176,7 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 							}
 						}
 						/*if pmd point to a 2m page and is in ram*/
-						if((!pmd_none(*pmd)&&pmd_large(*pmd))){
+						if((!pmd_none(*pmd)&&pmd_trans_huge(*pmd))){
 							page=pmd_page(*pmd);
 							if(is_pmd_ram(*pmd)){
 								i =page_record->index[INDEX_PAGE_IN_RAM2M];
@@ -196,6 +212,7 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 	printk("2m page count:%d\n",count_2m);
 	printk("2m page in ram count:%d\n",count_2m_ram); 
 	printk("1g page count:%d\n",count_1g);
+	printk("--------------------------------------------\n");
 	return 0;
 }
 /*when page->mapping ow bit clear, points to inode address_space , or NULL.If page mapped as anonymous 
@@ -215,7 +232,7 @@ static int get_page_hash_value(PageRecord *p_record){
 	struct page *temp_page;
 	u32 hash_temp;
 	char str[9];
-	page_num=page_record->index[INDEX_PAGE_IN_RAM4K]+page_record->index[INDEX_PAGE_IN_CACHE4K]+page_record->index[INDEX_PAGE_IN_RAM2M]+page_record->index[INDEX_PAGE_IN_RAM2M]+page_record->index[INDEX_PAGE_IN_RAM2M];
+	page_num=page_record->index[INDEX_PAGE_IN_RAM4K]+page_record->index[INDEX_PAGE_IN_CACHE4K]+page_record->index[INDEX_PAGE_IN_RAM2M]+page_record->index[INDEX_PAGE_IN_CACHE2M];
 	if(page_num<=0)
 		return -1;
 	/*in fact it is a 2 ventor array*/
@@ -223,8 +240,9 @@ static int get_page_hash_value(PageRecord *p_record){
 	memset(page_hash,0,page_num*9);	
 	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM4K];j++){
 		temp_page=page_record->page_in_ram4k[j];
+		printk("page_count:%d\n",temp_page->_mapcount);
 		hash_temp=calc_check_num(temp_page);
-		printk("hash value:%08x\n",hash_temp);
+	//	printk("hash value:%08x\n",hash_temp);
 		sprintf(page_hash+i,"%08x",hash_temp);
 	//	printk("%s\n",(char *)(page_hash+i));
 		i+=9;
@@ -237,7 +255,7 @@ static int get_page_hash_value(PageRecord *p_record){
 		temp_page=page_record->page_in_ram2m[j];
 		hash_temp=calc_check_num(temp_page);
 		sprintf(page_hash+i,"%08x",hash_temp);
-		i+=8;
+		i+=9;
 	}
 	/*for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE2M];j++){
 		temp_page=page_record->page_in_cache2m[j];
@@ -436,17 +454,18 @@ int walk_radix_tree(struct radix_tree_root *root,PageCache *page_cache){
 	int res=0;
 	void **results;
 	unsigned int max_items;
-	if(PAGE_CACHE_COUNT-page_cache->index<100){
+	/*if(PAGE_CACHE_COUNT-page_cache->index<100){
 		printk("page cache memory is not enough\n");
 		return -1;
-	}
-	results=(page_cache->page_cache+page_cache->index);
+	}*/
+//	results=(page_cache->page_cache+page_cache->index);
+	results=(page_cache->page_cache);
 	max_items=maxindex(root->height);
-	printk("max_items:%d\n",max_items);
+	//printk("max_items:%d\n",max_items);
 	res=radix_tree_gang_lookup(root,results,0,max_items);
 	page_cache->index+=res;
-	printk("total %d page\n",res);
-	return 0;
+//	printk("total %d page\n",res);
+	return res;
 }
 /*test bit n is 1*/
 #define SHIFT 6
@@ -462,6 +481,7 @@ int chen_test_bit(const unsigned long *vaddr,int size,int offset){
 	return res;
 }
 /*get other page without in pagetbale*/
+
 int get_page_cache_by_process(struct task_struct *task_temp,PageCache *page_cache){
 	struct files_struct *file_set;
 	struct fdtable *fdt;
@@ -469,7 +489,11 @@ int get_page_cache_by_process(struct task_struct *task_temp,PageCache *page_cach
 	struct file **file_fd;
 	struct address_space *address_temp;
 	int i=0;
+	int total_num;
 	file_set=task_temp->files;
+	if(file_set==NULL){
+		return 0;
+	}
 	file_fd=file_set->fd_array;
 	fdt=file_set->fdt;
 	/*walk fd arrary*/
@@ -478,13 +502,14 @@ int get_page_cache_by_process(struct task_struct *task_temp,PageCache *page_cach
 			temp_file=file_fd[i];
 			if(temp_file->f_mapping!=NULL){
 				address_temp=(temp_file->f_mapping);
-				walk_radix_tree(&address_temp->page_tree,page_cache);
+				total_num+=walk_radix_tree(&address_temp->page_tree,page_cache);
 			}else{
-				printk("%d fd temp_file->f_mapping is NULL\n");
+				printk("%d fd temp_file->f_mapping is NULL\n",i);
 			}
 		}
 		i++;
 	}
+//	printk("total cache:%d\n",total_num);
 	return 0;
 }
 void view_page_cache(void){
@@ -511,6 +536,7 @@ int get_page_not_maped(PageRecord *page_record){
 static int mainfun(vm_info_t *vm_info){
 	struct task_struct *tpro=0;
 	int pid=vm_info->pid;
+	int i;
 	unsigned long buffer_add=vm_info->mb.buffer_add;
 	int flags=vm_info->flags;
 	if(flags==1)goto hash_begin;
@@ -527,10 +553,16 @@ static int mainfun(vm_info_t *vm_info){
 	}
 	printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
 	walk_page_table(tpro,page_record);
-//	get_page_cache_by_process(tpro,page_cache);
+	get_page_cache_by_process(tpro,page_cache);
 //	view_page_cache();
 	/*hash every page and write to buffer_add*/
-    get_page_hash_value(page_record);	
+   // get_page_hash_value(page_record);
+	getProcessThreads(tpro);
+	for(i=0;i<pthreads.index;i++){
+		get_page_cache_by_process(pthreads.pthreads_p[i],page_cache);	
+	}
+	printk("there are %d page in cache\n",page_cache->index);
+	//view_page_cache();
     //view_hash_value();
 hash_begin:
 	//trans_page_to_vadd(page_record,page_vset);
@@ -607,15 +639,22 @@ void del_file_entry(void)
 
 void reclaim_memory(void){
 	page_num=0;
-	if(page_record)
+	pthreads.index=0;
+	if(page_record){
 		kfree(page_record);
-	if(page_vset)
+		page_record=NULL;
+	}
+	if(page_vset){
 		kfree(page_vset);
+		page_vset=NULL;
+	}
 	if(page_hash){
 		kfree(page_hash);
+		page_hash=NULL;
 	}
 	if(page_cache){
 		kfree(page_cache);
+		page_cache=NULL;
 	}
 }
 

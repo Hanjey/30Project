@@ -21,6 +21,7 @@ static const char rcsid[] = "$Id$";
 #include <libxml/xmlmemory.h>
 #include <libxml/parser.h>
 #include <string.h>
+#include <pthread.h>
 /*shared structure with kernel*/
 struct memory_block{
 	void * buffer_add;
@@ -31,7 +32,7 @@ typedef struct vm_info{
 	struct memory_block mb;
 	int flags;
 }VM_INFO;
-
+static int ret_value=0;
 VM_INFO vm_info;
 /*talk to walk_processs module*/
 #define CHEN_WALK 0xEF
@@ -48,15 +49,20 @@ int write_buffer_to_file(void  *buffer_add,int flags,int size){
 		ret=write(fd,buffer_add,size);
 		if(ret<1){
 			printf("write second error!\n");
-		}
-		printf("write second OK!\n");
+		}else
+			printf("write second OK!\n");
 	}else{
 		fd=open(FILE_ORIGAL,O_RDWR|O_CREAT);
+		if(fd==-1){
+			printf("error open file\n");
+			return -1;
+		}
+		printf("open file OK!\n");
 		ret = write(fd,buffer_add,size);
 		if(ret<1){
 			printf("write oril error!\n");
-		}
-		printf("write oril OK!\n");
+		}else
+			printf("write oril OK!\n");
 	}
 	close(fd);
 	return 0;
@@ -213,43 +219,145 @@ int resume_vm_state(virDomainPtr dom){
 	}
 	return 0;
 }
+
+int shutdown_vm_state(virDomainPtr dom){
+	if(virDomainShutdown(dom)<0){
+		printf("error,can not shutdown vm state\n");
+		return -1;
+	}
+	return 0;
+}
 void init_vm_info(){
 	vm_info.flags=0;
 	vm_info.mb.buffer_add=malloc(4096);
 	vm_info.mb.buffer_size=4096;
 }
+/*syn threads*/
+void *thread_suspend(virDomainPtr dom){
+	if(suspend_vm_state(dom)<0){
+		ret_value=-1;
+		printf("suspend vm error\n");
+		goto error_return;
+	}
+	printf("suspend vm……\n");
+	sleep(5);
+error_return:
+	return (void *)&ret_value;
+}
+
+void *thread_fir(virDomainPtr dom){
+	pthread_t sus_thread;
+	int retPid;
+	int *ret;
+	retPid = pthread_create(&sus_thread,NULL,thread_suspend,dom);
+	if(retPid!=0){                          
+		printf("create suspend thread error!\n");
+		ret_value=-1;
+		goto error_return;
+	}                                       
+	pthread_join(sus_thread,(void **)&ret);
+	if(*ret<0){
+		ret_value=-1;
+		goto error_return;
+	}
+	sleep(5);
+	printf("begin detect……\n");
+error_return:
+	return (void *)&ret_value;
+}
+
+void *thread_shutdown(virDomainPtr dom){
+	pthread_t fir_thread;
+	int retPid;
+	int *ret;
+	retPid = pthread_create(&fir_thread,NULL,thread_fir,dom);
+	if(retPid!=0){
+		ret_value=-1;		
+	    printf("create first thread error!\n");
+		goto error_return;
+	}                                       
+	pthread_join(fir_thread,(void **)&ret);
+	if(*ret<0){
+		ret_value=-1; 
+		goto error_return;
+	}
+	if(resume_vm_state(dom)<0){  
+		ret_value=-1;       
+		printf("resume vm state error\n");		
+	    goto error_return;                                                                                                               
+	}
+	if(shutdown_vm_state(dom)<0){
+		ret_value=-1;
+		printf("shutdown vm state error\n");
+		goto error_return;
+	}
+	sleep(5);
+	printf("shutdown vm……\n");
+error_return:
+	return (void *)&ret_value;
+}
+
+void *thread_sec(virDomainPtr dom){
+	pthread_t sd_thread;
+	int retPid;
+	int *ret;
+	retPid = pthread_create(&sd_thread,NULL,thread_shutdown,dom);
+	if(retPid!=0){                          
+	        printf("create shutdown thread error!\n");
+			ret_value =-1;
+			goto error_return;
+	}                                       
+	pthread_join(sd_thread,(void **)&ret);
+	if(*ret<0){
+		ret_value=-1;
+		printf("join secthread error\n");
+		goto error_return;
+	}
+	sleep(2);
+	printf("begin second detect……\n");
+error_return:
+	return (void *)&ret_value;
+}
+
 /* first start a thread to call a fun while function includes:
  * 1.call libvirt API to suspend vitual mechine,then thread sleep waitting for a signal
  * then begin first  detect
  * 2.when thread wake up by a signal,it resume VM and call shutdown API 
  * then begin second detect
  * */
-int main_menu(virConnectPtr conn){
+int main_menu(virConnectPtr conn,int pid){
 	int vmid;
-	int pid=854;
+	pthread_t sec_thread;
 	virDomainPtr dom=NULL;
+	int retPid;
 	char *dom_source;
+	int *ret;
 	list_domains(conn);
 	printf("1.chose one virtual mechine,input vm id\n");
 	scanf("%d",&vmid);
 	/*transfer vmid to qemu process Id*/
-/*	dom=virDomainLookupByID(conn,vmid);
-	if(dom==NULL){
+	dom=virDomainLookupByID(conn,vmid);
+	/*if(dom==NULL){
 		printf("can not find %d vm\n",vmid);
 		goto error_code;
-	}
-	dom_source=get_vm_image_path(conn,dom);
+	}*/
+	/*dom_source=get_vm_image_path(conn,dom);
 	if(dom_source==NULL){
 		printf("can not get vm xml desc\n");
 		goto error_code;
+	}*/
+/*	retPid = pthread_create(&sec_thread,NULL,thread_sec,dom);
+	if(retPid!=0){
+		printf("create sec thread error!\n");
+		goto error_code;
 	}
-	suspend_vm_state(dom);
-	int i;
-	for( i=0;i<10;i++){
-		printf("sleep %d s\n",i);
-		sleep(1);
+	pthread_join(sec_thread,(void **)&ret);
+	if(*ret<0){
+		printf("join sec thread error\n");
+		goto error_code;
 	}
- 	resume_vm_state(dom);	*/
+	printf("begin check……\n");
+	sleep(1);*/
 	//VM_INFO vm_info;
 	vm_info.pid=pid;
 	init_vm_info();
@@ -260,13 +368,25 @@ error_code:
 
 
 int main(int argc,char *argv[]){
+	if(argc!=3){
+		printf("error argument\n");
+		return -1;
+	}
+	int pid=0;
+	if(strcmp(argv[1],"-p")==0){
+		pid=atoi(argv[2]);
+	}else{
+		printf("error pid!\n");
+		return -1;
+	}	
 	virConnectPtr conn;
 	conn=virConnectOpen("qemu:///system");
 	if(conn==NULL){
 		printf("failed to open connection to qemu:///system!\n");
 		return 1;
 	}
-	main_menu(conn);
+
+	main_menu(conn,pid);
 	virConnectClose(conn);
 	if(vm_info.mb.buffer_add)
 		free(vm_info.mb.buffer_add);

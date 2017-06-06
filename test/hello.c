@@ -12,17 +12,50 @@ static const char rcsid[] = "$Id$";
  * @brief	
  */
 
-#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
+#include<pthread.h>
+#include<unistd.h>
+static int ret_value;
+void *threada(void *arg){
+	printf("thread a run\n");
+	sleep(1);
+}
+/*wait for a*/
+void *threadb(void *arg){
+	pthread_t thread_a;                                                                                                                   
+	pthread_create(&thread_a,NULL,threada,NULL);                                                                                          
+	pthread_join(thread_a,NULL);
+	printf("thread b run\n");
+	sleep(1);
+}
+/*wait for b*/
+void *threadc(void *arg){
+	pthread_t thread_b;                                                                                                                   
+	pthread_create(&thread_b,NULL,threadb,NULL);                                                                                          
+	pthread_join(thread_b,NULL);
+	printf("thread c run\n");
+	sleep(1);
+}
+/*wait for c*/
+void *threadd(void *arg){
+	pthread_t thread_c;                                                                                                                   
+	pthread_create(&thread_c,NULL,threadc,NULL);                                                                                          
+	pthread_join(thread_c,NULL);
+	printf("thread d run\n");
+	sleep(1);
+	ret_value =1;
+	return (void *)&ret_value;
+}
+
+
+
 int main(){
-	unsigned int a=0x23edf033;
-	unsigned int b=0x23edf034;
-	char temp[30];
-	memset(temp,0,20);
-	//itoa(a,temp,16);
-	sprintf(temp,"%x\n",a);
-	printf("%s\n",temp);
+	int *ret;
+	pthread_t thread_d;
+	pthread_create(&thread_d,NULL,threadd,NULL);
+	pthread_join(thread_d,(void **)&ret);
+	printf("ret:%d\n",*ret);
+	printf("main thread run\n");
 	return 0;
 }
 
