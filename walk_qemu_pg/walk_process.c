@@ -18,6 +18,7 @@
 #include <linux/rcupdate.h>
 #include <linux/version.h>
 #include <linux/atomic.h>
+#include <linux/kallsyms.h>
 #include "./hashtest/Hash.h"
 #include "walk_process.h"
 /*we can get physics page belong to one process:
@@ -26,14 +27,16 @@
  * 2、pagecache
  * pagecache is mainly caused by read ahead manism
  * **/
-/*define globle data zone*/ 
+
+/*---define globle data zone*/ 
 typedef struct _pfn_recoard{
 	unsigned long pfn_m[500];
 	unsigned long index;
 }pfn_recoard;
-/*define pfn data base*/
-
+/*---define pfn data base*/
 static pfn_recoard pfn_rec;
+
+/*info  block communicate with userspace*/
 struct memory_block{
 	unsigned long buffer_add;
 	int buffer_size;
@@ -49,6 +52,7 @@ typedef struct _vm_info{
 	struct memory_block mb;
 	int flags;
 }vm_info_t;
+/*struct record all kinds of page*/
 #define INDEX_PAGE_IN_RAM4K   0
 #define INDEX_PAGE_IN_CACHE4K 1
 #define INDEX_PAGE_IN_RAM2M   2
@@ -63,26 +67,34 @@ typedef struct _page_recoard{
 	unsigned int index[4];
 	char page_name[4][20];
 }PageRecord;
+/*---------*/
 typedef struct _page_vaddr_record{
 	unsigned long pvaddr[500];
 	int index;
 }PageVaddrSet;
+/*structure store PageCache temporary*/
 typedef struct _page_cache{
 	struct page *page_cache[PAGE_CACHE_COUNT];
 	unsigned int index;
 }PageCache;
+/*point to memory storing hash value*/
 char *page_hash;
 PageCache *page_cache;
+/*toatl page num*/
 int page_num;
 PageRecord *page_record;
 PageVaddrSet *page_vset;
+/*pthreads_p record all the threads belonging to one process
+ *pthreads_p array storing threads strucure address
+ *index first available position 
+ * */
 typedef struct pthreads_p{
 	struct task_struct *pthreads_p[64];
 	unsigned char index;
 }Pthreads_p;
 Pthreads_p pthreads;
 #define long_to_pfn(val) val>>12
-/*get target process struct  by pid*/
+/*get target process structure  by pid*/
 static int getTargetProcess(struct task_struct **tprocess,int pid){
 	struct task_struct *task,*p;
 	struct list_head *pos;
@@ -97,9 +109,10 @@ static int getTargetProcess(struct task_struct **tprocess,int pid){
                  count++;
                 // printk("%5d----------%s\n",p->pid,p->comm);
          }
-	printk("<0> process count:%d\n",count);
+	printk("process count:%d\n",count);
 	return 0;
 }
+/*get all threads belonging to a process,and store thread structure address to pthreads*/
 static int getProcessThreads(struct task_struct *tprocess){
 	pthreads.index=0;
 	struct list_head *pos;
@@ -111,7 +124,7 @@ static int getProcessThreads(struct task_struct *tprocess){
 	}
 	return 0;
 }
-/*walk all page table*/
+/*walk process  page table*/
 #define huge_page_1g(pud) (pud_val(pud)>>0x7)&0x1
 #define huge_page_2m(pmd) (pmd_val(pmd)>>0x7)&0x1
 
@@ -215,10 +228,91 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 	printk("--------------------------------------------\n");
 	return 0;
 }
-/*when page->mapping ow bit clear, points to inode address_space , or NULL.If page mapped as anonymous 
+/*split huge page to normal page*/
+static int split_hugepage_to_normal(pmd_t *pmd){
+	return 0;
+}
+static int tatal_page;
+static int pagenum_in_cache;
+/*static int get physics address by virtual address*/
+static int  *trans_vaddr_to_paddr(struct vm_area_struct *vma,unsigned long address){
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *ptep, pte;
+	spinlock_t *ptl;
+	struct page *page;
+	struct mm_struct *mm;
+	mm=vma->vm_mm;
+	if(mm==NULL)return -1;
+	pgd = pgd_offset(mm, address);
+	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
+			goto no_page_table;	
+	pud = pud_offset(pgd, address);
+	if (pud_none(*pud))
+			goto no_page_table;
+	pmd = pmd_offset(pud, address);
+	if (pmd_none(*pmd))
+			goto no_page_table;
+	if (pmd_trans_huge(*pmd)) {
+		/*handle huge page*/
+		if(is_pmd_ram(*pmd))
+			tatal_page+=512;
+		return 512;
+	}
+	ptep = pte_offset_map_lock(mm, pmd, address, &ptl);	
+	pte = *ptep;
+	if (!pte_present(pte)){
+		if (pte_none(pte))	{
+			pte_unmap_unlock(ptep, ptl);
+			goto no_page_table;
+		}
+		/*check page cache*/
+		if(check_page_cache(ptep))
+			pagenum_in_cache++;
+	}
+	page=pte_page(pte);
+	//page = vm_normal_page(vma, address, pte);
+	if(page!=NULL)tatal_page++;
+	pte_unmap_unlock(ptep, ptl);
+	/*record page*/
+	return 1;
+no_page_table:
+	return 1;
+}
+/*get mapping information for a vma*/
+static int get_mapping_info_by_vma(struct vm_area_struct *vma_temp){
+	unsigned long temp_address;
+	int temp_num;
+	temp_address=vma_temp->vm_start;
+	while(temp_address<vma_temp->vm_end){
+		/*temp_num indicate a range*/
+		temp_num = trans_vaddr_to_paddr(vma_temp,temp_address);
+		temp_address+=temp_num<<PAGE_SHIFT;
+	}
+	return 0;
+}
+/*get all mapping information by a process*/
+static int tatal_vma;
+static int walk_vma_list_for_process(struct task_struct *task_temp){
+	struct list_head *pos;
+	struct vm_area_struct *vma_temp;
+	vma_temp=task_temp->mm->mmap;
+	if(vma_temp==NULL)return -1;
+	do{
+		printk("vma range:start:%lx end:%lx\n",vma_temp->vm_start,vma_temp->vm_end);
+		tatal_vma+=(vma_temp->vm_end-vma_temp->vm_start)>>PAGE_SHIFT;
+		get_mapping_info_by_vma(vma_temp);
+		vma_temp=vma_temp->vm_next;
+		cond_resched();
+	}while(vma_temp!=NULL&&vma_temp!=task_temp->mm->mmap);	
+	return 0;
+}
+
+/* PageAnon: wheather a page maps a file or just a annon page
+ * when page->mapping ow bit clear, points to inode address_space , or NULL.If page mapped as anonymous 
  * memory, low bit is set, and it points to anon_vma object:
  * */
-
 /*if page anno*/
 /*
 static inline int PageAnon(struct page *page)
@@ -226,6 +320,7 @@ static inline int PageAnon(struct page *page)
 		return ((unsigned long)page->mapping & PAGE_MAPPING_ANON) != 0;
 }
 */
+/*get page hash value according to PageRecord*/
 static int get_page_hash_value(PageRecord *p_record){
 	int j=0;
 	int i=0;
@@ -292,6 +387,7 @@ static int view_page_record(PageRecord *p_record){
 	}
 	return 0;
 }
+/*-----view page vaddr*/
 static int view_page_vadd(PageVaddrSet *page_vset){
 	int i=0;
 	while(i<page_vset->index){
@@ -299,7 +395,7 @@ static int view_page_vadd(PageVaddrSet *page_vset){
 	}
 	return 0;
 }
-/*get annon page virtual address by page*/
+/*------get annon page virtual address by page*/
 static unsigned int trans_page_vadd_anno(struct page *page){
 	struct anon_vma *anon_vma;
 	pgoff_t pgoff;
@@ -316,7 +412,7 @@ static unsigned int trans_page_vadd_anno(struct page *page){
 	return address;
 }
 
-/*get file mapping page virtual address by page*/
+/*------get file mapping page virtual address by page*/
 static unsigned int trans_page_vadd_file(struct page *page){
 	struct address_space *mapping = page->mapping;
 	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
@@ -326,26 +422,29 @@ static unsigned int trans_page_vadd_file(struct page *page){
 	vma_interval_tree_foreach(vma, &mapping->i_mmap, pgoff, pgoff) {
 			 address = page_address_in_vma(page, vma);
 	}
+	mutex_unlock(&mapping->i_mmap_mutex);
 	return address;
 }
+//struct address_space *swapper_spaces=(struct address_space *)ffffffff81c5f520;
 /*check if unmapping page existed in swap cache or page cache*/
-
-static int check_page_cache(pte_t *un_map_ptes,int page_num){
+typedef struct page* (*LOOKUPSWAPCACHE)(swp_entry_t entry);
+static int check_page_cache(pte_t *pte){
+	if(pte_file(*pte))return 0;
 	struct page *found_page=NULL;
-	unsigned long found_pfn;
-	int i=0;
 	swp_entry_t entry;
-	while(i<page_num){
-		entry=pte_to_swp_entry(un_map_ptes[i]);
-		found_page=find_get_page(swap_address_space(entry),entry.val);
-		if(found_page!=NULL){
-			found_pfn=page_to_pfn(found_page);
-			pfn_rec.pfn_m[pfn_rec.index++]=found_pfn;
-		}
-		i++;	
+	LOOKUPSWAPCACHE lookup_swap_cache;
+	unsigned long add=kallsyms_lookup_name("lookup_swap_cache");
+	lookup_swap_cache=(LOOKUPSWAPCACHE)add;
+	entry=pte_to_swp_entry(*pte);
+	found_page = lookup_swap_cache(entry);
+	printk("in check_page_cache------\n");
+	if(found_page!=NULL){
+		tatal_page++;
+		return 1;
 	}
 	return 0;
 }
+/*get record page vaddr*/
 static int trans_page_to_vadd(PageRecord *page_record,PageVaddrSet *page_vset){
 	int i=0;
 	struct page *temp_page;
@@ -400,6 +499,8 @@ static int init_page_record(PageRecord *page_record,PageVaddrSet *page_vset){
  * flags:0 first time to hash
  * flags:1 second time to hash
  * */
+
+/*check all page cache belong to one process not including swap cache*/
 #ifdef __KERNEL__
 #define RADIX_TREE_MAP_SHIFT	(CONFIG_BASE_SMALL ? 4 : 6)
 #else
@@ -512,6 +613,7 @@ int get_page_cache_by_process(struct task_struct *task_temp,PageCache *page_cach
 //	printk("total cache:%d\n",total_num);
 	return 0;
 }
+/*view page cache*/
 void view_page_cache(void){
 	int i,j=0,k=0;
 	struct page *temp_page;
@@ -532,7 +634,7 @@ void view_page_cache(void){
 int get_page_not_maped(PageRecord *page_record){
 	return 0;
 }
-
+/*main function to execute*/
 static int mainfun(vm_info_t *vm_info){
 	struct task_struct *tpro=0;
 	int pid=vm_info->pid;
@@ -552,16 +654,20 @@ static int mainfun(vm_info_t *vm_info){
 		return -1;
 	}
 	printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
-	walk_page_table(tpro,page_record);
-	get_page_cache_by_process(tpro,page_cache);
+	walk_vma_list_for_process(tpro);
+	printk("all mapping page:%d\n",tatal_vma);
+	printk("mapping in memory:%d\n",tatal_page);
+	printk("page in cache or in file:%d\n",pagenum_in_cache);
+	//walk_page_table(tpro,page_record);
+	//get_page_cache_by_process(tpro,page_cache);
 //	view_page_cache();
 	/*hash every page and write to buffer_add*/
    // get_page_hash_value(page_record);
-	getProcessThreads(tpro);
+	/*getProcessThreads(tpro);
 	for(i=0;i<pthreads.index;i++){
 		get_page_cache_by_process(pthreads.pthreads_p[i],page_cache);	
 	}
-	printk("there are %d page in cache\n",page_cache->index);
+	printk("there are %d page in cache\n",page_cache->index);*/
 	//view_page_cache();
     //view_hash_value();
 hash_begin:
@@ -576,8 +682,9 @@ static int export_page_to_file(struct file *file,unsigned long page_vadd){
 	
 	return 0;
 }
-
+/*reclaim_memory once finish current hash*/
 void reclaim_memory(void);
+
 /*talk to userspace*/
 #define CHEN_WALK 0xEF
 #define CHECK _IOR(CHEN_WALK,0x1,unsigned int)
@@ -593,7 +700,7 @@ static long chen_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 				return ret;
 			}
 			mainfun(&vm_info);
-			printk("pid get from userspace:%d\n",vm_info.pid);
+			/*printk("pid get from userspace:%d\n",vm_info.pid);
 			printk("buffer_add get from userspace:%p\n",vm_info.mb.buffer_add);
 			ret=copy_to_user((void *)vm_info.mb.buffer_add,(void *)page_hash,page_num*9);
 			printk("page_num:%d\n",page_num);
@@ -604,7 +711,7 @@ static long chen_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 			ret=copy_to_user(arg,&vm_info,sizeof(vm_info_t));
 			if(ret){
 				printk("fail to update vm_info information\n");
-			}
+			}*/
 			reclaim_memory();
 			break;
 		default:
@@ -657,9 +764,11 @@ void reclaim_memory(void){
 		page_cache=NULL;
 	}
 }
-
-
+//extern struct address_space swapper_spaces[];
 static  __init int walk_init(void){
+//	printk("swapper_spaces:%p\n",swapper_spaces);
+	unsigned long add=kallsyms_lookup_name("lookup_swap_cache");
+	printk("add:%lx\n",add);
 	create_file_entry();
 	printk("init walk process\n");
 	return 0;
@@ -673,4 +782,4 @@ module_init(walk_init);
 module_exit(walk_exit);
 
 
-
+MODULE_LICENSE("GPL");

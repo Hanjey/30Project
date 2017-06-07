@@ -78,13 +78,13 @@ int beginDetect(){
 		return -1;
 	}
 	ret=ioctl(fd,CHECK,&vm_info);
-	printf("vm_info.size:%d\n",vm_info.mb.buffer_size);
+	//printf("vm_info.size:%d\n",vm_info.mb.buffer_size);
 	if(ret!=0){//normal
 		printf("ioctl error\n");
 		goto error;
 	}
 	close(fd);
-	write_buffer_to_file(vm_info.mb.buffer_add,vm_info.flags,vm_info.mb.buffer_size);
+	//write_buffer_to_file(vm_info.mb.buffer_add,vm_info.flags,vm_info.mb.buffer_size);
 error:
 	return 0;
 }
