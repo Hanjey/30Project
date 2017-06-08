@@ -60,15 +60,19 @@ typedef struct _vm_info{
 #define INDEX_COUNT 	      4
 #define PAGE_CACHE_COUNT 2048
 typedef struct _page_recoard{
-	struct page *page_in_ram[300];
-	unsigned int index;
+	struct page *page_in_ram4k[300];
+    struct page *page_in_cache4k[100];
+	struct page *page_in_ram2m[100];
+	struct page *page_in_cache2m[50];
+	unsigned int index[4];
+	char page_name[4][20];
 }PageRecord;
 /*---------*/
 typedef struct _page_vaddr_record{
 	unsigned long pvaddr[500];
 	int index;
 }PageVaddrSet;
-/*--------structure store PageCache temporary*/
+/*structure store PageCache temporary*/
 typedef struct _page_cache{
 	struct page *page_cache[PAGE_CACHE_COUNT];
 	unsigned int index;
@@ -79,7 +83,7 @@ PageCache *page_cache;
 /*toatl page num*/
 int page_num;
 PageRecord *page_record;
-//PageVaddrSet *page_vset;
+PageVaddrSet *page_vset;
 /*pthreads_p record all the threads belonging to one process
  *pthreads_p array storing threads strucure address
  *index first available position 
@@ -120,7 +124,7 @@ static int getProcessThreads(struct task_struct *tprocess){
 	}
 	return 0;
 }
-/*--------walk process  page table*/
+/*walk process  page table*/
 #define huge_page_1g(pud) (pud_val(pud)>>0x7)&0x1
 #define huge_page_2m(pmd) (pmd_val(pmd)>>0x7)&0x1
 
@@ -168,14 +172,14 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 								if((!pte_none(*pte))){
 									page=pte_page(*pte);
 									if(is_pte_ram(*pte)){
-							//			i =page_record->index[INDEX_PAGE_IN_RAM4K];
-							//			page_record->page_in_ram4k[i]=page;
-							//			page_record->index[INDEX_PAGE_IN_RAM4K]++;
+										i =page_record->index[INDEX_PAGE_IN_RAM4K];
+										page_record->page_in_ram4k[i]=page;
+										page_record->index[INDEX_PAGE_IN_RAM4K]++;
 									}else{//cache only reserve page in swap cache not in file cache 
 										if(1){
-										//	i =page_record->index[INDEX_PAGE_IN_CACHE4K];
-										//	page_record->page_in_cache4k[i]=page;
-										//	page_record->index[INDEX_PAGE_IN_CACHE4K]++;
+											i =page_record->index[INDEX_PAGE_IN_CACHE4K];
+											page_record->page_in_cache4k[i]=page;
+											page_record->index[INDEX_PAGE_IN_CACHE4K]++;
 										}
 									}
 									count_4k++;
@@ -188,14 +192,14 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 						if((!pmd_none(*pmd)&&pmd_trans_huge(*pmd))){
 							page=pmd_page(*pmd);
 							if(is_pmd_ram(*pmd)){
-							//	i =page_record->index[INDEX_PAGE_IN_RAM2M];
-							//	page_record->page_in_ram2m[i]=page;
-							//	page_record->index[INDEX_PAGE_IN_RAM2M]++;
+								i =page_record->index[INDEX_PAGE_IN_RAM2M];
+								page_record->page_in_ram2m[i]=page;
+								page_record->index[INDEX_PAGE_IN_RAM2M]++;
 							}else{//cache only reserve page in swap cache not in file cache 
 								if(1){
-							//		i =page_record->index[INDEX_PAGE_IN_CACHE2M];  
-							//		page_record->page_in_cache2m[i]=page; 
-							//		page_record->index[INDEX_PAGE_IN_CACHE2M]++; 
+									i =page_record->index[INDEX_PAGE_IN_CACHE2M];  
+									page_record->page_in_cache2m[i]=page; 
+									page_record->index[INDEX_PAGE_IN_CACHE2M]++; 
 								}								
 							}
 							count_2m++;
@@ -224,25 +228,29 @@ static int walk_page_table(struct task_struct *p, PageRecord *page_record){
 	printk("--------------------------------------------\n");
 	return 0;
 }
+/*split huge page to normal page*/
+static int split_hugepage_to_normal(pmd_t *pmd){
+	return 0;
+}
 static int tatal_page;
 static int pagenum_in_cache;
-/*declare un export functions*/
+
 typedef struct page* (*LOOKUPSWAPCACHE)(swp_entry_t);
 typedef int (*PMDHUGE)(pmd_t pud);
 typedef struct page* (*FOLLOWHUGEPMD)(struct mm_struct *mm, unsigned long address,
          pmd_t *pmd, int write);
-//typedef struct page* (*FOLLOWTRANSHUGEPMD)(struct vm_area_struct *vma, unsigned long addr,pmd_t *pmd,unsigned int flags);
+typedef struct page* (*FOLLOWTRANSHUGEPMD)(struct vm_area_struct *vma, unsigned long addr,pmd_t *pmd,unsigned int flags);
 
 LOOKUPSWAPCACHE lookup_swap_cache_chen;
 PMDHUGE pmd_huge;
 FOLLOWHUGEPMD follow_huge_pmd;
-//FOLLOWTRANSHUGEPMD follow_trans_huge_pmd_chen;
+FOLLOWTRANSHUGEPMD follow_trans_huge_pmd_chen;
 
 static  int init_ex_fun(void){
 	lookup_swap_cache_chen=(LOOKUPSWAPCACHE)kallsyms_lookup_name("lookup_swap_cache");
 	pmd_huge=(PMDHUGE)kallsyms_lookup_name("pmd_huge");
 	follow_huge_pmd=(FOLLOWHUGEPMD)kallsyms_lookup_name("follow_huge_pmd");
-//	follow_trans_huge_pmd_chen=(FOLLOWTRANSHUGEPMD)kallsyms_lookup_name("follow_trans_huge_pmd");
+	follow_trans_huge_pmd_chen=(FOLLOWTRANSHUGEPMD)kallsyms_lookup_name("follow_trans_huge_pmd");
 	return 0;
 }
 /*static int get physics address by virtual address*/
@@ -274,13 +282,14 @@ static int  *trans_vaddr_to_paddr(struct vm_area_struct *vma,unsigned long addre
 		return 512;
 	}
 	if(pmd_trans_huge(*pmd)){
-		page = pte_page(*(pte_t *)pmd);
-		unsigned long pfn_temp=page_to_pfn(page);
+		printk("pmd_trans_huge is true\n");
+		spin_lock(&mm->page_table_lock);
+		page = follow_trans_huge_pmd_chen(vma, address, pmd, 0);
+		spin_unlock(&mm->page_table_lock);
 		if(page!=NULL){ 
 			tatal_page+=512;    
 			return 512;    
 		}	
-		return 512;
 	}
 	ptep = pte_offset_map_lock(mm, pmd, address, &ptl);	
 	pte = *ptep;
@@ -356,14 +365,14 @@ static int get_page_hash_value(PageRecord *p_record){
 	struct page *temp_page;
 	u32 hash_temp;
 	char str[9];
-	page_num=0;
+	page_num=page_record->index[INDEX_PAGE_IN_RAM4K]+page_record->index[INDEX_PAGE_IN_CACHE4K]+page_record->index[INDEX_PAGE_IN_RAM2M]+page_record->index[INDEX_PAGE_IN_CACHE2M];
 	if(page_num<=0)
 		return -1;
 	/*in fact it is a 2 ventor array*/
 	page_hash=(char *)kmalloc(page_num*9,GFP_KERNEL);
 	memset(page_hash,0,page_num*9);	
-	for(j=0;j<page_record->index;j++){
-		temp_page=page_record->page_in_ram[j];
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM4K];j++){
+		temp_page=page_record->page_in_ram4k[j];
 		printk("page_count:%d\n",temp_page->_mapcount);
 		hash_temp=calc_check_num(temp_page);
 	//	printk("hash value:%08x\n",hash_temp);
@@ -371,6 +380,20 @@ static int get_page_hash_value(PageRecord *p_record){
 	//	printk("%s\n",(char *)(page_hash+i));
 		i+=9;
 	}
+/*for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE4K];j++){
+		temp_page=page_record->page_in_cache4k[j];
+        page_hash[i++]=calc_check_num(temp_page);
+	}*/
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM2M];j++){
+		temp_page=page_record->page_in_ram2m[j];
+		hash_temp=calc_check_num(temp_page);
+		sprintf(page_hash+i,"%08x",hash_temp);
+		i+=9;
+	}
+	/*for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE2M];j++){
+		temp_page=page_record->page_in_cache2m[j];
+		page_hash[i++]=calc_check_num(temp_page);
+	}*/
 	return 0;
 }
 /*view_hash_value*/
@@ -385,10 +408,28 @@ static int view_hash_value(void){
 		i++;
 	}
 }
-/*------view page record information*/
+/*view page record information*/
 static int view_page_record(PageRecord *p_record){
 	int j=0;
-	for(j=0;j;j++){     
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM4K];j++){
+		printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_RAM4K],page_record->page_in_ram4k[j]);	
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE4K];j++){     
+	    printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_CACHE4K],page_record->page_in_cache4k[j]);
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_RAM2M];j++){     
+	    printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_RAM2M],page_record->page_in_ram2m[j]);
+	}
+	for(j=0;j<page_record->index[INDEX_PAGE_IN_CACHE2M];j++){     
+	    printk("%s-----%p\n",page_record->page_name[INDEX_PAGE_IN_CACHE2M],page_record->page_in_cache2m[j]);
+	}
+	return 0;
+}
+/*-----view page vaddr*/
+static int view_page_vadd(PageVaddrSet *page_vset){
+	int i=0;
+	while(i<page_vset->index){
+		printk("vaddr:%lu\n",page_vset->pvaddr[i]);
 	}
 	return 0;
 }
@@ -439,14 +480,51 @@ static int check_page_cache(pte_t *pte){
 }
 /*get record page vaddr*/
 static int trans_page_to_vadd(PageRecord *page_record,PageVaddrSet *page_vset){
+	int i=0;
+	struct page *temp_page;
+	unsigned long vaddr;
+	if(page_record->index[INDEX_PAGE_IN_RAM4K]>0){
+		while(i<page_record->index[INDEX_PAGE_IN_RAM4K]){
+			temp_page=page_record->page_in_ram4k[i];
+			if(PageAnon(temp_page)){
+				vaddr=trans_page_vadd_anno(temp_page);
+				page_vset->pvaddr[page_vset->index]=vaddr;
+				page_vset->index++;
+			}
+			if(temp_page->mapping){
+				vaddr=trans_page_vadd_file(temp_page);
+				page_vset->pvaddr[page_vset->index]=vaddr;
+				page_vset->index++;
+			}
+		}	
+	}
+	if(page_record->index[INDEX_PAGE_IN_CACHE4K]>0){
+	
+	}
+	if(page_record->index[INDEX_PAGE_IN_RAM2M]>0){
+	
+	}
+	if(page_record->index[INDEX_PAGE_IN_CACHE2M]>0){
+	
+	}	
 	return 0;
 }
 /*page_to_pfn transfer a page structure to pfn
  *pte_page    transfer a pte to page structure
  * */
 /*init page_record function*/
-static int init_page_record(PageRecord *page_record){
+static int init_page_record(PageRecord *page_record,PageVaddrSet *page_vset){
 	memset(page_record,0,sizeof(PageRecord));
+	memset(page_vset,0,sizeof(PageVaddrSet));
+	page_vset->index=0;
+	page_record->index[INDEX_PAGE_IN_RAM4K]=0;                        
+	page_record->index[INDEX_PAGE_IN_CACHE4K]=0;                                                                                         
+	page_record->index[INDEX_PAGE_IN_RAM2M]=0;                                                                                           
+	page_record->index[INDEX_PAGE_IN_CACHE2M]=0;
+	strcpy(page_record->page_name[INDEX_PAGE_IN_RAM4K],"page_in_ram4k");
+	strcpy(page_record->page_name[INDEX_PAGE_IN_CACHE4K],"page_in_cache4k");
+    strcpy(page_record->page_name[INDEX_PAGE_IN_CACHE4K],"page_in_ram2m");
+	strcpy(page_record->page_name[INDEX_PAGE_IN_CACHE4K],"page_in_cache2m");
 	return 0;
 }
 /* 
@@ -599,11 +677,11 @@ static int mainfun(vm_info_t *vm_info){
 	int flags=vm_info->flags;
 	if(flags==1)goto hash_begin;
 	page_record=kmalloc(sizeof(PageRecord),GFP_KERNEL);
-//	page_vset=kmalloc(sizeof(PageVaddrSet),GFP_KERNEL);
-//	page_cache=kmalloc(sizeof(PageCache),GFP_KERNEL);
-//	page_cache->index=0;
+	page_vset=kmalloc(sizeof(PageVaddrSet),GFP_KERNEL);
+	page_cache=kmalloc(sizeof(PageCache),GFP_KERNEL);
+	page_cache->index=0;
 	//printk("PageRecord size :%d\n",sizeof(PageRecord));
-	init_page_record(page_record);
+	init_page_record(page_record,page_vset);
 	getTargetProcess(&tpro,pid);
 	if(tpro==NULL){
 		printk("find no process!\n");
@@ -611,8 +689,8 @@ static int mainfun(vm_info_t *vm_info){
 	}
 	printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
 	walk_vma_list_for_process(tpro);
-	printk("all mapping page:%d tatal memory:%d KB\n",tatal_vma,tatal_vma*4);
-	printk("page in ram:%d\n memory in ram %d KB\n",tatal_page,tatal_page*4);
+	printk("all mapping page:%d\n",tatal_vma);
+	printk("mapping in memory:%d\n",tatal_page);
 	printk("page in cache or in file:%d\n",pagenum_in_cache);
 	//walk_page_table(tpro,page_record);
 	//get_page_cache_by_process(tpro,page_cache);
@@ -709,9 +787,17 @@ void reclaim_memory(void){
 		kfree(page_record);
 		page_record=NULL;
 	}
+	if(page_vset){
+		kfree(page_vset);
+		page_vset=NULL;
+	}
 	if(page_hash){
 		kfree(page_hash);
 		page_hash=NULL;
+	}
+	if(page_cache){
+		kfree(page_cache);
+		page_cache=NULL;
 	}
 }
 static  __init int walk_init(void){

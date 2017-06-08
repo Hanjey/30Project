@@ -1,0 +1,6 @@
+install steps:
+1. make
+2. ./install.sh
+
+uninstall steps
+1. ./remove.sh
