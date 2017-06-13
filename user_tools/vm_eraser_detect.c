@@ -25,18 +25,33 @@ static const char rcsid[] = "$Id$";
 /*shared structure with kernel*/
 struct memory_block{
 	void * buffer_add;
-	unsigned long buffer_size;
+	int buffer_size;
 };
+/*1G memory (page num)*/
+#define MAX_MEMORY_HASH 262144
+/*2M memory*/
+#define HASH_MEMORY     2097152
+
+#define NORMAL 0x0
+#define NO_PROCESS 0x1
+#define ALLOC_MEM_ERROR 0x2
+#define NOMM 0X3
+
 typedef struct vm_info{
 	int pid;
 	struct memory_block mb;
 	int flags;
+	unsigned int error_num;
+	unsigned int total_memory;
+	unsigned int memory_in_ram;
 }VM_INFO;
 static int ret_value=0;
+static int oril_or_sec;
 VM_INFO vm_info;
 /*talk to walk_processs module*/
 #define CHEN_WALK 0xEF
 #define CHECK _IOR(CHEN_WALK,0x1,unsigned int)
+#define HASH  _IOR(CHEN_WALK,0x2,unsigned int)//begin hash
 #define FILE_ORIGAL "/root/temp/first.txt"
 #define FILE_SECOND "/root/temp/second.txt"
 /*file name can be a random num*/
@@ -71,13 +86,59 @@ int write_buffer_to_file(void  *buffer_add,int flags,int size){
 int beginDetect(){
 	int ret;
 	int fd;
+	int hash_time=0;
+	int i;
 	printf("vm_info.size:%d\n",vm_info.mb.buffer_size);
 	fd=open("/proc/chen_walk",0);
 	if(fd<0){
 		printf("error open proc file\n");
 		return -1;
 	}
+begin_check:
 	ret=ioctl(fd,CHECK,&vm_info);
+	//if(vm_info.flags==1)goto begin_check;
+	switch(vm_info.error_num){
+		case NORMAL: 
+			break;
+		case NO_PROCESS:
+			printf("find no process!\n");
+			goto error;
+			break;
+		case ALLOC_MEM_ERROR:
+			printf("alloc memory error in kernel\n");
+			goto error;
+			break;
+		case NOMM:
+			printf("system error\n");
+			goto error;
+			break;
+	}
+	if(ret!=0){
+		goto error;
+	}
+	printf("tatal memory(4KB page num):%d\n",vm_info.total_memory);
+	printf("r a m memory(4KB page num):%d\n",vm_info.memory_in_ram);
+	printf("----------------------------------------\n");
+	printf("if begin detect memory?(yes/no)\n");
+	char str[10];
+	scanf("%s\n",str);
+	if(!strcmp(str,"yes")){
+		ret=ioctl(fd,HASH,&vm_info);
+
+	}else if(!strcmp(str,"no"))
+		goto error;
+	else{
+		printf("error instruction\n");
+		goto error;
+	}
+	/*hash_time=vm_info.memory_in_ram/MAX_MEMORY_HASH+1;
+	while(i<hash_time){
+		if(i!=0){
+			vm_info.flags=1;
+		}
+		ret=ioctl(fd,HASH,&vm_info);
+		write_buffer_to_file(vm_info.mb.buffer_add,oril_or_sec,vm_info.mb.buffer_size);
+	}*/
 	//printf("vm_info.size:%d\n",vm_info.mb.buffer_size);
 	if(ret!=0){//normal
 		printf("ioctl error\n");
@@ -86,6 +147,7 @@ int beginDetect(){
 	close(fd);
 	//write_buffer_to_file(vm_info.mb.buffer_add,vm_info.flags,vm_info.mb.buffer_size);
 error:
+	close(fd);
 	return 0;
 }
 /*<devices>
@@ -227,10 +289,15 @@ int shutdown_vm_state(virDomainPtr dom){
 	}
 	return 0;
 }
-void init_vm_info(){
+int init_vm_info(){
 	vm_info.flags=0;
-	vm_info.mb.buffer_add=malloc(4096);
-	vm_info.mb.buffer_size=4096;
+	vm_info.mb.buffer_add=malloc(HASH_MEMORY);
+	if(vm_info.mb.buffer_add==NULL)
+		return -1;
+	vm_info.mb.buffer_size=HASH_MEMORY;
+	vm_info.total_memory=0;
+	vm_info.memory_in_ram=0;
+	return 0;
 }
 /*syn threads*/
 void *thread_suspend(virDomainPtr dom){
@@ -261,6 +328,7 @@ void *thread_fir(virDomainPtr dom){
 		goto error_return;
 	}
 	sleep(5);
+	oril_or_sec=0;
 	printf("begin detect……\n");
 error_return:
 	return (void *)&ret_value;
@@ -313,6 +381,7 @@ void *thread_sec(virDomainPtr dom){
 		printf("join secthread error\n");
 		goto error_return;
 	}
+	oril_or_sec=1;
 	sleep(2);
 	printf("begin second detect……\n");
 error_return:
@@ -360,7 +429,7 @@ int main_menu(virConnectPtr conn,int pid){
 	sleep(1);*/
 	//VM_INFO vm_info;
 	vm_info.pid=pid;
-	init_vm_info();
+	if(init_vm_info()==-1)return -1;
 	beginDetect();
 error_code:
 	return 0;

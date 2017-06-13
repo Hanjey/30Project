@@ -46,16 +46,28 @@ void *threadd(void *arg){
 	ret_value =1;
 	return (void *)&ret_value;
 }
+#define BYTES_PER_1M (1<<20)
 
-
-
+#define ITEM_PER_2M (BYTES_PER_1M<<1)>>3
+typedef struct stu{
+	int i;
+}stu;
+stu stu_t;
+int test(){
+	stu_t.i++;
+}
 int main(){
-	int *ret;
+	stu_t.i=0;
+/*	int *ret;
 	pthread_t thread_d;
 	pthread_create(&thread_d,NULL,threadd,NULL);
 	pthread_join(thread_d,(void **)&ret);
 	printf("ret:%d\n",*ret);
-	printf("main thread run\n");
+	printf("main thread run\n");*/
+	test();
+	printf("ITEM_PER_2M %d\n",ITEM_PER_2M);
+	printf("stu_t %d\n",stu_t.i);
+	printf("size of void *%d\n",(int)sizeof(void *));
 	return 0;
 }
 
