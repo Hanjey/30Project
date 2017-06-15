@@ -36,11 +36,13 @@ struct memory_block{
 #define NO_PROCESS 0x1
 #define ALLOC_MEM_ERROR 0x2
 #define NOMM 0X3
-
+/*flags:bit 0 indicate the first or the second time 
+ *		bit 1 indicate if need request hash ;1 need 0 no
+ * */
 typedef struct vm_info{
 	int pid;
 	struct memory_block mb;
-	int flags;
+	int flags; 
 	unsigned int error_num;
 	unsigned int total_memory;
 	unsigned int memory_in_ram;
@@ -51,7 +53,7 @@ VM_INFO vm_info;
 /*talk to walk_processs module*/
 #define CHEN_WALK 0xEF
 #define CHECK _IOR(CHEN_WALK,0x1,unsigned int)
-#define HASH  _IOR(CHEN_WALK,0x2,unsigned int)//begin hash
+#define HASH  _IOR(CHEN_WALK,0x3,unsigned int)//begin hash
 #define FILE_ORIGAL "/root/temp/first.txt"
 #define FILE_SECOND "/root/temp/second.txt"
 /*file name can be a random num*/
@@ -59,7 +61,7 @@ int write_buffer_to_file(void  *buffer_add,int flags,int size){
 	int fd;
 	int ret=0;
 	if(flags){
-	    fd=open(FILE_SECOND,O_RDWR|O_CREAT);
+	    fd=open(FILE_SECOND,O_RDWR|O_CREAT|O_APPEND);
 		if(fd)
 		ret=write(fd,buffer_add,size);
 		if(ret<1){
@@ -67,7 +69,7 @@ int write_buffer_to_file(void  *buffer_add,int flags,int size){
 		}else
 			printf("write second OK!\n");
 	}else{
-		fd=open(FILE_ORIGAL,O_RDWR|O_CREAT);
+		fd=open(FILE_ORIGAL,O_RDWR|O_CREAT|O_APPEND);
 		if(fd==-1){
 			printf("error open file\n");
 			return -1;
@@ -82,19 +84,41 @@ int write_buffer_to_file(void  *buffer_add,int flags,int size){
 	close(fd);
 	return 0;
 }
-/*send instruction to kernel*/
+/*begin hash*/
+int beginHash(){
+	int fd,flags,ret=0;
+	fd=open("/proc/chen_walk",0);
+	if(fd<0){
+	   printf("error open proc file\n");
+	   return -1;
+	}
+begin_detect:
+	memset(vm_info.mb.buffer_add,0,MAX_MEMORY_HASH*9);	
+	ret=ioctl(fd,HASH,&vm_info);                                                                                                         
+    printf("hash num:%d\n",vm_info.mb.buffer_size/9);                                                                                    
+    flags=vm_info.flags;                                                                                                                 
+    write_buffer_to_file(vm_info.mb.buffer_add,flags&0x1,vm_info.mb.buffer_size);                                                
+    if(flags&0x2)goto begin_detect;//hash have not finished ,continue!
+	if(ret!=0){//normal                                                                                                                  
+	    printf("ioctl error\n");                                                                                                         
+	    goto error;                                                                                                                      
+	}         
+error:	
+	close(fd);
+	return 0;
+}
+/*just collect memory*/
 int beginDetect(){
 	int ret;
 	int fd;
 	int hash_time=0;
 	int i;
-	printf("vm_info.size:%d\n",vm_info.mb.buffer_size);
+	int flags;
 	fd=open("/proc/chen_walk",0);
 	if(fd<0){
 		printf("error open proc file\n");
 		return -1;
 	}
-begin_check:
 	ret=ioctl(fd,CHECK,&vm_info);
 	//if(vm_info.flags==1)goto begin_check;
 	switch(vm_info.error_num){
@@ -119,36 +143,11 @@ begin_check:
 	printf("tatal memory(4KB page num):%d\n",vm_info.total_memory);
 	printf("r a m memory(4KB page num):%d\n",vm_info.memory_in_ram);
 	printf("----------------------------------------\n");
-	printf("if begin detect memory?(yes/no)\n");
-	char str[10];
-	scanf("%s\n",str);
-	if(!strcmp(str,"yes")){
-		ret=ioctl(fd,HASH,&vm_info);
-
-	}else if(!strcmp(str,"no"))
-		goto error;
-	else{
-		printf("error instruction\n");
-		goto error;
-	}
-	/*hash_time=vm_info.memory_in_ram/MAX_MEMORY_HASH+1;
-	while(i<hash_time){
-		if(i!=0){
-			vm_info.flags=1;
-		}
-		ret=ioctl(fd,HASH,&vm_info);
-		write_buffer_to_file(vm_info.mb.buffer_add,oril_or_sec,vm_info.mb.buffer_size);
-	}*/
-	//printf("vm_info.size:%d\n",vm_info.mb.buffer_size);
-	if(ret!=0){//normal
-		printf("ioctl error\n");
-		goto error;
-	}
-	close(fd);
-	//write_buffer_to_file(vm_info.mb.buffer_add,vm_info.flags,vm_info.mb.buffer_size);
-error:
 	close(fd);
 	return 0;
+error:
+	close(fd);
+	return -1;
 }
 /*<devices>
  *<emulator>/usr/libexec/qemu-kvm</emulator>
@@ -291,10 +290,10 @@ int shutdown_vm_state(virDomainPtr dom){
 }
 int init_vm_info(){
 	vm_info.flags=0;
-	vm_info.mb.buffer_add=malloc(HASH_MEMORY);
+	vm_info.mb.buffer_add=malloc(MAX_MEMORY_HASH*9);
 	if(vm_info.mb.buffer_add==NULL)
 		return -1;
-	vm_info.mb.buffer_size=HASH_MEMORY;
+	vm_info.mb.buffer_size=MAX_MEMORY_HASH*9;
 	vm_info.total_memory=0;
 	vm_info.memory_in_ram=0;
 	return 0;
@@ -307,7 +306,7 @@ void *thread_suspend(virDomainPtr dom){
 		goto error_return;
 	}
 	printf("suspend vm……\n");
-	sleep(5);
+	sleep(1);
 error_return:
 	return (void *)&ret_value;
 }
@@ -327,9 +326,8 @@ void *thread_fir(virDomainPtr dom){
 		ret_value=-1;
 		goto error_return;
 	}
-	sleep(5);
-	oril_or_sec=0;
-	printf("begin detect……\n");
+	printf("first detect------\n");
+	beginHash();
 error_return:
 	return (void *)&ret_value;
 }
@@ -354,13 +352,13 @@ void *thread_shutdown(virDomainPtr dom){
 		printf("resume vm state error\n");		
 	    goto error_return;                                                                                                               
 	}
+	printf("shutdown vm……\n");
 	if(shutdown_vm_state(dom)<0){
 		ret_value=-1;
 		printf("shutdown vm state error\n");
 		goto error_return;
 	}
-	sleep(5);
-	printf("shutdown vm……\n");
+	sleep(2);
 error_return:
 	return (void *)&ret_value;
 }
@@ -381,9 +379,9 @@ void *thread_sec(virDomainPtr dom){
 		printf("join secthread error\n");
 		goto error_return;
 	}
-	oril_or_sec=1;
-	sleep(2);
+	vm_info.flags |= 0x1;
 	printf("begin second detect……\n");
+	beginHash();
 error_return:
 	return (void *)&ret_value;
 }
@@ -394,28 +392,41 @@ error_return:
  * 2.when thread wake up by a signal,it resume VM and call shutdown API 
  * then begin second detect
  * */
-int main_menu(virConnectPtr conn,int pid){
+int main_menu(virConnectPtr conn){
 	int vmid;
 	pthread_t sec_thread;
 	virDomainPtr dom=NULL;
 	int retPid;
 	char *dom_source;
 	int *ret;
+	char str[10];
 	list_domains(conn);
 	printf("1.chose one virtual mechine,input vm id\n");
 	scanf("%d",&vmid);
 	/*transfer vmid to qemu process Id*/
 	dom=virDomainLookupByID(conn,vmid);
-	/*if(dom==NULL){
+	if(dom==NULL){
 		printf("can not find %d vm\n",vmid);
 		goto error_code;
-	}*/
+	}
 	/*dom_source=get_vm_image_path(conn,dom);
 	if(dom_source==NULL){
 		printf("can not get vm xml desc\n");
 		goto error_code;
 	}*/
-/*	retPid = pthread_create(&sec_thread,NULL,thread_sec,dom);
+	/*first step:collect memory*/
+	if(beginDetect()==-1)goto error_code;
+	printf("if begin detect memory?\n");
+	scanf("%s",str);
+	if(!strcmp(str,"yes")){
+		printf("begin detect-----------------\n");
+		if(init_vm_info()==-1)goto error_code;
+		goto begin_hash;
+	}
+	else
+		goto error_code;
+begin_hash:
+	retPid = pthread_create(&sec_thread,NULL,thread_sec,dom);
 	if(retPid!=0){
 		printf("create sec thread error!\n");
 		goto error_code;
@@ -425,12 +436,9 @@ int main_menu(virConnectPtr conn,int pid){
 		printf("join sec thread error\n");
 		goto error_code;
 	}
-	printf("begin check……\n");
-	sleep(1);*/
+	printf("OK,Hash finished\n");
+begin_check:
 	//VM_INFO vm_info;
-	vm_info.pid=pid;
-	if(init_vm_info()==-1)return -1;
-	beginDetect();
 error_code:
 	return 0;
 }
@@ -454,8 +462,8 @@ int main(int argc,char *argv[]){
 		printf("failed to open connection to qemu:///system!\n");
 		return 1;
 	}
-
-	main_menu(conn,pid);
+	vm_info.pid=pid;
+	main_menu(conn);
 	virConnectClose(conn);
 	if(vm_info.mb.buffer_add)
 		free(vm_info.mb.buffer_add);

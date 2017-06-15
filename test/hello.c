@@ -15,6 +15,7 @@ static const char rcsid[] = "$Id$";
 #include <stdio.h>
 #include<pthread.h>
 #include<unistd.h>
+#include <fcntl.h>
 static int ret_value;
 void *threada(void *arg){
 	printf("thread a run\n");
@@ -52,21 +53,29 @@ void *threadd(void *arg){
 typedef struct stu{
 	int i;
 }stu;
-stu stu_t;
-int test(){
-	stu_t.i++;
-}
 int main(){
-	stu_t.i=0;
+	unsigned int temp=0x8cd234f4;
+	unsigned int temp2=0x12345678;
+	const char *file_path="hello_test.txt";
+	char str[20];
+	sprintf(str,"%x ",temp);
+	sprintf(str+9,"%x ",temp2);
 /*	int *ret;
 	pthread_t thread_d;
 	pthread_create(&thread_d,NULL,threadd,NULL);
 	pthread_join(thread_d,(void **)&ret);
 	printf("ret:%d\n",*ret);
 	printf("main thread run\n");*/
-	test();
 	printf("ITEM_PER_2M %d\n",ITEM_PER_2M);
-	printf("stu_t %d\n",stu_t.i);
+	printf("str %s",str);
+	int fd;
+	fd=open(file_path,O_RDWR|O_CREAT);
+	write(fd,str,20);
+	close(fd);
+	char str1[10];
+	printf("please input:\n");
+	scanf("%s\n",str1);
+	printf("%s %d\n",str1,strcmp(str1,"yes"));
 	printf("size of void *%d\n",(int)sizeof(void *));
 	return 0;
 }

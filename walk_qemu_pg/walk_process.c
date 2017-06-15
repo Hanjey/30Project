@@ -276,19 +276,23 @@ static int extend_store(void){
 	memset(pro_info_t->page_record->first_level[first_index],0,MAX_PAGE_IN_RAM);                                                         
 	pro_info_t->page_record->second_index=0;                                                                                             
 	return 0;                                                                                                                            
-}                                                                                                                                       
-static  int add_item(struct page *page){                                                                                                 
-	int first_index= pro_info_t->page_record->first_index;                                                                               
-	int second_index=pro_info_t->page_record->second_index;                                                                              
-	struct page **page_add=pro_info_t->page_record->first_level[first_index];                                                            
-	page_add[second_index]=page;                                                                                                         
+}   
+static int mapcount;
+static  int add_item(struct page *page){        
+	int count;
+	count=atomic_read(&(page)->_mapcount);
+	if(count==0)mapcount++;
+	int first_index= pro_info_t->page_record->first_index;                
+	int second_index=pro_info_t->page_record->second_index;  
+	struct page **page_add=pro_info_t->page_record->first_level[first_index];
+	page_add[second_index]=page;  
 	if(second_index==(ITEM_PER_2M-1)){
 		printk("extend store\n");		
-		extend_store();                                                                                                                  
+		extend_store();  
 	}else{
 		pro_info_t->page_record->second_index++;
-	}                                                                                                                                 
-	return 0;                                                                                                                            
+	}                        
+	return 0;                                                    
 }     
 
 static int check_page_cache(pte_t *pte, walk_vma_controller *wvc);
@@ -299,6 +303,7 @@ static int  *trans_vaddr_to_paddr(struct vm_area_struct *vma,unsigned long addre
 	pmd_t *pmd;
 	pte_t *ptep, pte;
 	spinlock_t *ptl;
+	unsigned long pfn_temp;
 	struct page *page;
 	struct mm_struct *mm;
 	mm=vma->vm_mm;
@@ -343,6 +348,7 @@ static int  *trans_vaddr_to_paddr(struct vm_area_struct *vma,unsigned long addre
 		if(check_page_cache(ptep,wvc))
 			pagenum_in_cache++;
 	}else{
+		pfn_temp=pte_pfn(pte);
 		page=pte_page(pte);
 		//page = vm_normal_page(vma, address, pte);
 		if(page!=NULL){
@@ -437,18 +443,12 @@ record:
 	else
 		max_limit=ITEM_PER_2M;
 	for(j=0;j<max_limit;j++){
-		printk("page_count:%d\n",temp_page[j]->_mapcount);
+		//printk("page_count:%d\n",temp_page[j]->_mapcount);
 		hash_temp=calc_check_num(temp_page[j]);
 		//	printk("hash value:%08x\n",hash_temp);
-		sprintf(pro_info_t->page_hash+i,"%08x",hash_temp);
+		sprintf(pro_info_t->page_hash+i,"%08x ",hash_temp);
 		i+=9;
 	}
-	/*if hash finished*/
-	if(seclect_index==p_record->first_index){
-		pro_info_t->p_hash_con.is_finished=true;
-	}else{
-		pro_info_t->p_hash_con.index=++seclect_index;
-	}/*toatal page num this time hashed*/
 	pro_info_t->p_hash_con.curr_hash_num=j;
 end:
 	return 0;
@@ -506,8 +506,8 @@ static int check_page_cache(pte_t *pte, walk_vma_controller *wvc){
 	swp_entry_t entry;
 	entry=pte_to_swp_entry(*pte);
 	found_page = lookup_swap_cache_chen(entry);
-	printk("in check_page_cache------\n");
 	if(found_page!=NULL){
+		add_item(found_page);
 		wvc->tatal_page++;
 		return 1;
 	}
@@ -622,6 +622,7 @@ static int collect_phy_memory(vm_info_t *vm_info){
 	printk("target process id:%d  pname:%s\n",tpro->pid,tpro->comm);
 collect:
 	ret=walk_vma_list_for_process(pro_info_t->tpro,pro_info_t->wvc);
+	printk("mapcount:%d\n",mapcount);
 	if(ret==NOMM)goto error_return;
 	vma_controller=pro_info_t->wvc;
 	if(1){
@@ -634,25 +635,27 @@ collect:
 error_return:
 	return ret;
 }
-
-
+static int begin_index=0;
 static int hash_page(vm_info_t *vm_info){
 	if(pro_info_t==NULL)
 		return -1;
 	int i=0;
+	printk("buffer  address:%lx\n",vm_info->mb.buffer_add);
+	printk("buffer  size:%d\n",vm_info->mb.buffer_size);
 	int first_index =pro_info_t->page_record->first_index;
-	int begin_index = pro_info_t->p_hash_con.index;
+	//int begin_index = pro_info_t->p_hash_con.index;
 	get_page_hash_value(begin_index);
 	if(begin_index==first_index){
-		vm_info->flags &= 0x2;
-		if(vm_info->flags&0x1){   
-		   	pro_info_t->p_hash_con.is_finished=true;
+		vm_info->flags &= ~0x2;//set hash end
+		if(vm_info->flags&0x1){  
+		    /*only second time finished will set true!*/	
+		   	pro_info_t->p_hash_con.is_finished=true;//if need reclaim_memory
+		}else{
+			begin_index=0;
 		}
 	}else{
-		vm_info->flags |= 0x2;
-	}
-	if(vm_info->flags&0x1){
-		pro_info_t->p_hash_con.is_finished=true;	
+		vm_info->flags |= 0x2;//set hash continue
+		begin_index++;
 	}
 	return 0;
 }
@@ -680,7 +683,7 @@ static int reclaim_memory(void);
 /*talk to userspace*/
 #define CHEN_WALK 0xEF
 #define CHECK _IOR(CHEN_WALK,0x1,unsigned int)//collect page information
-#define HASH  _IOR(CHEN_WALK,0x2,unsigned int)//begin hash
+#define HASH  _IOR(CHEN_WALK,0x3,unsigned int)//begin hash
 
 struct proc_dir_entry *p_chen=NULL;
 char entry_name[]="chen_walk";
@@ -704,18 +707,18 @@ static long chen_ioctl(struct file * filp,unsigned int ioctl,unsigned long arg){
 				return ret;
 			}
 			hash_page(&vm_info);
+			export_hashvalue(&vm_info);
 			ret=copy_to_user(arg,&vm_info,sizeof(vm_info_t));
 			if(ret){
 				printk("fail to update vm_info information\n");
 			}	
-			export_hashvalue(&vm_info);
+			//export_hashvalue(&vm_info);
 			/*after second time,reclaim memory*/
 			if(pro_info_t->p_hash_con.is_finished){
 				reclaim_memory();
 			}else{
 				reset_hash_control();
 			}	
-			//get_page_hash_value();	
 			break;
 		default:
 			printk("unknown command!\n");
@@ -768,6 +771,10 @@ static int  reclaim_memory(){
 	if(pro_info_t->page_hash){
 		kfree(pro_info_t->page_hash);
 		pro_info_t->page_hash=NULL;
+	}
+	if(pro_info_t->wvc){
+		kfree(pro_info_t->wvc);
+		pro_info_t->wvc=NULL;
 	}
 end:
 	return 0;
