@@ -358,7 +358,7 @@ void *thread_shutdown(virDomainPtr dom){
 		printf("shutdown vm state error\n");
 		goto error_return;
 	}
-	sleep(2);
+	sleep(5);
 error_return:
 	return (void *)&ret_value;
 }
