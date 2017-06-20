@@ -22,6 +22,7 @@ static const char rcsid[] = "$Id$";
 #include <libxml/parser.h>
 #include <string.h>
 #include <pthread.h>
+#include "../hash/hash.h"
 /*shared structure with kernel*/
 struct memory_block{
 	void * buffer_add;
@@ -400,6 +401,7 @@ int main_menu(virConnectPtr conn){
 	char *dom_source;
 	int *ret;
 	char str[10];
+	char reve[10]; 
 	list_domains(conn);
 	printf("1.chose one virtual mechine,input vm id\n");
 	scanf("%d",&vmid);
@@ -437,8 +439,14 @@ begin_hash:
 		goto error_code;
 	}
 	printf("OK,Hash finished\n");
+	printf("if begin caculate match rate?(yes/no)\n");
+	
 begin_check:
-	//VM_INFO vm_info;
+	scanf("%s",reve);
+	if(!strcmp(reve,"yes")){ 
+		printf("begin cacluate match rate------\n");
+		hash_file(FILE_ORIGAL,FILE_SECOND);
+	 }
 error_code:
 	return 0;
 }

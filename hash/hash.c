@@ -19,18 +19,15 @@ static const char rcsid[] = "$Id$";
 #include <error.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-
-#define file_org "/root/temp/first.txt"
-#define file_sec "/root/temp/second.txt"
+#include "hash.h"
+//#define file_org "/root/temp/first.txt"
+//#define file_sec "/root/temp/second.txt"
 /*512k for one thread*/
 #define max_hash 65536
-typedef struct hash_node{
-	char *start_address;
-	char *end_address;
-}HashNode;
-
 int hash_thread(HashNode *org_node,HashNode *sec_node){
 	char *start_org,*start_sec,*end_org,*end_sec;
+	char *zero_str="61574272";
+	float res;
 	int total_num=0,eff_num=0;
 	start_org=org_node->start_address;
 	end_org=org_node->end_address;
@@ -42,19 +39,24 @@ int hash_thread(HashNode *org_node,HashNode *sec_node){
 		str_org[8]='\0';
 		strncpy(str_sec,start_sec,8);
 		str_sec[8]='\0';
+		if(strcmp(str_org,zero_str)==0)
+			goto con;
 		if(strcmp(str_org,str_sec)==0){
 			eff_num++;
 		}
 		total_num++;
+		con:
 		start_org+=9;
 		start_sec+=9;
 	}
+	res=(float)eff_num/total_num*100;
 	printf("total_num:%d  eff_num:%d \n",total_num,eff_num);
+	printf("match rate:%.2f \%\n",res);
 	return 0;
 }
 
 
-int hash_file(){
+int hash_file(char *file_org,char *file_sec){
 	int fd_org,fd_sec;
 	int thread_index;
 	struct stat sb_org;
@@ -84,17 +86,6 @@ int hash_file(){
 	hash_thread(&org_node,&sec_node);
     int hash_lenth=max_hash*9;
 	/*split hash file*/
-
-	char *temp_ptr=add_org;
-	char *temp_ptr2=add_sec;
-	unsigned int *temp;
-	unsigned int *end_address;
-	/*create handle threads*/
-//	while(temp_ptr<add_org+sb_org.st_size){
-/*		end_address=temp_ptr+hash_lenth>add_org+sb_org.st_size?add_org+sb_org.st_size:temp_ptr+hash_lenth;
-		printf("start address:%p end address:%p\n",temp_ptr,end_address);
-		temp_ptr+=hash_lenth;*/
-	//}
 end_map:
 	close(fd_org);
 	close(fd_sec);
@@ -110,9 +101,9 @@ end_map:
 	}
 	return 0;
 }
-int main(){
+/*int main(){
 	hash_file();
 	return 0;
-}
+}*/
 
 
