@@ -758,7 +758,7 @@ static int  reclaim_memory(){
 		goto end;
 	if(pro_info_t->page_record==NULL)
 		goto end;
-	while(i<pro_info_t->page_record->first_index){
+	while(i<=pro_info_t->page_record->first_index){
 		if(pro_info_t->page_record->first_level[i]!=NULL){
 			kfree(pro_info_t->page_record->first_level[i]);
 			i++;

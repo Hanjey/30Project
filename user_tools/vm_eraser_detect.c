@@ -62,9 +62,9 @@ int write_buffer_to_file(void  *buffer_add,int flags,int size){
 	int fd;
 	int ret=0;
 	if(flags){
-	    fd=open(FILE_SECOND,O_RDWR|O_CREAT|O_APPEND);
+		fd=open(FILE_SECOND,O_RDWR|O_CREAT|O_APPEND);
 		if(fd)
-		ret=write(fd,buffer_add,size);
+			ret=write(fd,buffer_add,size);
 		if(ret<1){
 			printf("write second error!\n");
 		}else
@@ -90,19 +90,20 @@ int beginHash(){
 	int fd,flags,ret=0;
 	fd=open("/proc/chen_walk",0);
 	if(fd<0){
-	   printf("error open proc file\n");
-	   return -1;
+		printf("error open proc file\n");
+		return -1;
 	}
 begin_detect:
 	memset(vm_info.mb.buffer_add,0,MAX_MEMORY_HASH*9);	
 	ret=ioctl(fd,HASH,&vm_info);                                                                                                         
-    printf("hash num:%d\n",vm_info.mb.buffer_size/9);                                                                                    
-    flags=vm_info.flags;                                                                                                                 
-    write_buffer_to_file(vm_info.mb.buffer_add,flags&0x1,vm_info.mb.buffer_size);                                                
-    if(flags&0x2)goto begin_detect;//hash have not finished ,continue!
+	printf("hash num:%d\n",vm_info.mb.buffer_size/9);                                                                                    
+	flags=vm_info.flags;                                                                                                                 
+	write_buffer_to_file(vm_info.mb.buffer_add,flags&0x1,vm_info.mb.buffer_size);                                                
+	if(flags&0x2)goto begin_detect;//hash have not finished ,continue!
+	vm_info.mb.buffer_size=MAX_MEMORY_HASH*9;	
 	if(ret!=0){//normal                                                                                                                  
-	    printf("ioctl error\n");                                                                                                         
-	    goto error;                                                                                                                      
+		printf("ioctl error\n");                                                                                                         
+		goto error;                                                                                                                      
 	}         
 error:	
 	close(fd);
@@ -225,11 +226,68 @@ int exec_fun(virConnectPtr conn){
 	/*we need vm image path to suspend it */	
 	return 0;
 }
+int getPidByUUID(char *uuid){
+	FILE *fstream=NULL;
+	char buff[1024];
+	memset(buff,0,sizeof(buff));
+	if(NULL==(fstream=popen("ps -aux | grep qemu","r")))
+	{
+		return -1;
+	}
+	int ch;
+	FILE *fp;
+	fp=fopen("temp.txt","w");
+	if(fp==NULL)
+		return 0;
+	while((ch=fgetc(fstream))!=EOF)
+	{
+		fputc(ch,fp);
+	}
+	pclose(fstream);
+	fclose(fp);
+	int i,len,j;
+	char str[100];
+	char pid[10]={'0'};
+	int num=0;
+	int flags=0;
+	fp=fopen("temp.txt","r");
+	while(fgets(buff,1024,fp)!=NULL){
+		i=0,j=0;
+		flags=0;
+		len=strlen(buff);
+		while(i<len-5){
+			if(buff[i]>='0'&&buff[i]<='9'&&!flags){
+				pid[j++]=buff[i];
+				if(buff[i+1]==' '){
+					flags=1;
+					pid[j]=0;
+				}
+			}
+			if(buff[i]=='-'&&buff[i+1]=='u'&&buff[i+2]=='u'&&buff[i+3]=='i'&&buff[i+4]=='d'){
+				strncpy(str,&buff[i+6],36);
+				str[37]=0;
+				flags++;
+				if(strcmp(uuid,str)==0)
+					goto find;
+			}
+			i++;
+		}
+		memset(str,0,100);
+		memset(buff,0,1024);
+	}
+find:
+	num=atoi(pid);
+	printf("pid = %d\n",num);
+	fclose(fp);
+	remove("temp.txt");
+	return num;
+}
 /*get vm insformation*/
 int list_domains(virConnectPtr conn){
 	int i;
 	int numdomains;
 	int *activeDomains;
+	char uuid[100];
 	virDomainPtr dom;
 	numdomains=virConnectNumOfDomains(conn);
 	activeDomains=malloc(sizeof(int)*numdomains);
@@ -237,8 +295,10 @@ int list_domains(virConnectPtr conn){
 	printf("domain ID ---------domain name-----------\n");
 	for(i=0;i<numdomains;i++){
 		dom=virDomainLookupByID(conn,activeDomains[i]);
-		if(dom!=NULL)
-			printf("%4d----------%s\n",activeDomains[i],virDomainGetName(dom));
+		if(dom!=NULL){
+			virDomainGetUUIDString(dom,uuid);
+			printf("%4d   %s   %s\n",activeDomains[i],virDomainGetName(dom),uuid);
+		}
 	}
 	return 0;
 }
@@ -340,7 +400,7 @@ void *thread_shutdown(virDomainPtr dom){
 	retPid = pthread_create(&fir_thread,NULL,thread_fir,dom);
 	if(retPid!=0){
 		ret_value=-1;		
-	    printf("create first thread error!\n");
+		printf("create first thread error!\n");
 		goto error_return;
 	}                                       
 	pthread_join(fir_thread,(void **)&ret);
@@ -351,7 +411,7 @@ void *thread_shutdown(virDomainPtr dom){
 	if(resume_vm_state(dom)<0){  
 		ret_value=-1;       
 		printf("resume vm state error\n");		
-	    goto error_return;                                                                                                               
+		goto error_return;                                                                                                               
 	}
 	printf("shutdown vm……\n");
 	if(shutdown_vm_state(dom)<0){
@@ -370,9 +430,9 @@ void *thread_sec(virDomainPtr dom){
 	int *ret;
 	retPid = pthread_create(&sd_thread,NULL,thread_shutdown,dom);
 	if(retPid!=0){                          
-	        printf("create shutdown thread error!\n");
-			ret_value =-1;
-			goto error_return;
+		printf("create shutdown thread error!\n");
+		ret_value =-1;
+		goto error_return;
 	}                                       
 	pthread_join(sd_thread,(void **)&ret);
 	if(*ret<0){
@@ -411,14 +471,21 @@ int main_menu(virConnectPtr conn){
 		printf("can not find %d vm\n",vmid);
 		goto error_code;
 	}
+	char uuid[37];
+	 if(virDomainGetUUIDString(dom,uuid)==-1){
+	 	goto error_code;
+	 }
+	vm_info.pid=getPidByUUID(uuid);
+     printf("pid:%d\n",vm_info.pid);
+	 //return 0;
 	/*dom_source=get_vm_image_path(conn,dom);
-	if(dom_source==NULL){
-		printf("can not get vm xml desc\n");
-		goto error_code;
-	}*/
+	  if(dom_source==NULL){
+	  printf("can not get vm xml desc\n");
+	  goto error_code;
+	  }*/
 	/*first step:collect memory*/
 	if(beginDetect()==-1)goto error_code;
-	printf("if begin detect memory?\n");
+	printf("if begin detect memory?(yes/no)\n");
 	scanf("%s",str);
 	if(!strcmp(str,"yes")){
 		printf("begin detect-----------------\n");
@@ -439,38 +506,37 @@ begin_hash:
 		goto error_code;
 	}
 	printf("OK,Hash finished\n");
-	printf("if begin caculate match rate?(yes/no)\n");
-	
-begin_check:
+	//goto error_code;
+	printf("if begin caculate match rate?(yes/no)\n");	
 	scanf("%s",reve);
 	if(!strcmp(reve,"yes")){ 
 		printf("begin cacluate match rate------\n");
 		hash_file(FILE_ORIGAL,FILE_SECOND);
-	 }
+	}
 error_code:
 	return 0;
 }
 
 
 int main(int argc,char *argv[]){
-	if(argc!=3){
+	/*if(argc!=3){
 		printf("error argument\n");
 		return -1;
-	}
+	}*/
 	int pid=0;
-	if(strcmp(argv[1],"-p")==0){
+/*	if(strcmp(argv[1],"-p")==0){
 		pid=atoi(argv[2]);
 	}else{
 		printf("error pid!\n");
 		return -1;
-	}	
+	}*/	
 	virConnectPtr conn;
 	conn=virConnectOpen("qemu:///system");
 	if(conn==NULL){
 		printf("failed to open connection to qemu:///system!\n");
 		return 1;
 	}
-	vm_info.pid=pid;
+//	vm_info.pid=pid;
 	main_menu(conn);
 	virConnectClose(conn);
 	if(vm_info.mb.buffer_add)
