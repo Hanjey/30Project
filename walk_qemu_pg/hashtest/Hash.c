@@ -57,7 +57,26 @@ unsigned int jhash32(const int *k, int length, int initval){
 
 	return c;
 }
-u32 calc_check_num(struct page *page){
+/*hash specific length
+ * page page that need to hash
+ * hash_value buffer which store the hash value
+ * hash_size hash length once a time 
+ * */
+int calc_check_mem(struct page *page,u32 *value,int hash_size){
+	if(hash_size!=512&&hash_size!=1024&&hash_size!=2048&&hash_size!=4096)
+		return -1;
+	u32 checknum;
+	int i=0;
+	void *addr=kmap_atomic(page);
+	for(i=0;i<PAGE_SIZE/hash_size;i++){
+		checknum=jhash32(addr+i*hash_size,hash_size/4,17);
+		value[i]=checknum;
+	}
+	kunmap_atomic(addr);
+	return 1;
+}
+/*hash entire page*/
+int calc_check_num(struct page *page,u32 *hash_value,int hash_size){
 	u32 checknum;
 	void *addr=kmap_atomic(page);
 	checknum=jhash32(addr,PAGE_SIZE/4,17);

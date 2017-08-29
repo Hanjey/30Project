@@ -16,4 +16,5 @@
 #include<linux/highmem.h>
 
 #define u32 unsigned int
-u32 calc_check_num(struct page *page);
+int  calc_check_num(struct page *page,u32 *hash_value,int hash_size);
+int  calc_check_mem(struct page *page,u32 *hash_value,int hash_size);

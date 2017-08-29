@@ -76,8 +76,8 @@ int hash_file(char *file_org,char *file_sec){
 		printf("mmap sec file failed!\n");
 		goto end_map;
 	}
-	printf("org map address:%p end_address:%p org file size:%d\n",add_org,add_org+sb_org.st_size,sb_org.st_size);
-	printf("sec map address:%p  sec file size:%d\n",add_sec,sb_sec.st_size);
+	printf("org map address:%p org file size:%d\n",add_org,sb_org.st_size);
+	printf("sec map address:%p sec file size:%d\n",add_sec,sb_sec.st_size);
 	HashNode org_node,sec_node;
 	org_node.start_address=add_org;
 	org_node.end_address=add_org+sb_org.st_size;

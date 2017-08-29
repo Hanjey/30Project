@@ -434,24 +434,21 @@ static int get_page_hash_value(unsigned int seclect_index,vm_info_t *vm_info){
 	unsigned short first_index;
 	unsigned int second_index;
 	unsigned int max_limit;
-	int len;
-	PageRecord *p_record;
-	 p_record=pro_info_t->page_record;
-	int one_hash=ITEM_ONCE_HASH(vm_info->hash_size);
-	if(seclect_index==p_record->first_index)
-		len=p_record->second_index%one_hash==0?p_record->second_index/one_hash+1:p_record->second_index/one_hash+1;
-	else
-		len=PAGE_SIZE/(vm_info->hash_size);
+	int len=PAGE_SIZE/(vm_info->hash_size);
 	printk("len:%d\n",len);
+	int one_hash=ITEM_ONCE_HASH(vm_info->hash_size);
+	printk("one hash:%d\n",one_hash);
 	//int sec_index=pro_info_t->p_hash_con.sec_index;
-	u32 hash_temp[PAGE_SIZE/(vm_info->hash_size)];
+	u32 hash_temp[len];
+	PageRecord *p_record;
+	p_record=pro_info_t->page_record;
 	if(pro_info_t->page_hash!=NULL)goto record;
 	/*in fact it is a 2 ventor array*/
 	pro_info_t->page_hash=(char *)kmalloc(MAX_HASH_ONCE*9,GFP_KERNEL);
 record:
 	memset(pro_info_t->page_hash,0,MAX_HASH_ONCE*9);	
 	temp_page=p_record->first_level[seclect_index]+one_hash*sec_index;
-//	if(sec_index>=len)return 2;	
+	
 	/*need to consider how long the buffer is*/
 	bool is_flag = (p_record->second_index-one_hash*sec_index) < one_hash;
 	if(seclect_index==p_record->first_index&&is_flag)
@@ -459,17 +456,17 @@ record:
 	else
 		/*ITEM_PER_2M(hash_size) */
 		max_limit=one_hash;
-	printk("max_limit:%d\n",max_limit);
 	for(j=0;j<max_limit;j++){
 		//printk("page_count:%d\n",temp_page[j]->_mapcount);
 		ret = calc_check_mem(temp_page[j],hash_temp,vm_info->hash_size);
 		if(ret==-1) goto end;
-		for(k=0;k<(PAGE_SIZE/(vm_info->hash_size));k++){
+		//	printk("hash value:%08x\n",hash_temp);
+		for(k=0;k<len;k++){
 				sprintf(pro_info_t->page_hash+i,"%08x ",hash_temp[k]);
 				i+=9;
 	    }
 	}
-	pro_info_t->p_hash_con.curr_hash_num=j*(PAGE_SIZE/(vm_info->hash_size));
+	pro_info_t->p_hash_con.curr_hash_num=j;
 	sec_index++;
 //	pro_info_t->p_hash_con.sec_index++;
 	printk("seclect_index:%d   sec_index:%d\n",seclect_index,sec_index);

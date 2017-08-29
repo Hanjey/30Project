@@ -43,6 +43,7 @@ struct memory_block{
 typedef struct vm_info{
 	int pid;
 	struct memory_block mb;
+	int hash_size;
 	int flags; 
 	unsigned int error_num;
 	unsigned int total_memory;
@@ -75,7 +76,6 @@ int write_buffer_to_file(void  *buffer_add,int flags,int size){
 			printf("error open file\n");
 			return -1;
 		}
-		printf("open file OK!\n");
 		ret = write(fd,buffer_add,size);
 		if(ret<1){
 			printf("write oril error!\n");
@@ -97,9 +97,11 @@ begin_detect:
 	memset(vm_info.mb.buffer_add,0,MAX_MEMORY_HASH*9);	
 	ret=ioctl(fd,HASH,&vm_info);                                                                                                         
 	printf("hash num:%d\n",vm_info.mb.buffer_size/9);                                                                                    
-	flags=vm_info.flags;                                                                                                                 
+	flags=vm_info.flags;        
+	printf("flags&0x2:%d\n",flags&0x2);	
 	write_buffer_to_file(vm_info.mb.buffer_add,flags&0x1,vm_info.mb.buffer_size);                                                
 	if(flags&0x2)goto begin_detect;//hash have not finished ,continue!
+	printf("first hash end!\n");
 	vm_info.mb.buffer_size=MAX_MEMORY_HASH*9;	
 	if(ret!=0){//normal                                                                                                                  
 		printf("ioctl error\n");                                                                                                         
@@ -419,7 +421,7 @@ void *thread_shutdown(virDomainPtr dom){
 		printf("shutdown vm state error\n");
 		goto error_return;
 	}
-	sleep(5);
+	sleep(2);
 error_return:
 	return (void *)&ret_value;
 }
@@ -513,23 +515,31 @@ begin_hash:
 		printf("begin cacluate match rate------\n");
 		hash_file(FILE_ORIGAL,FILE_SECOND);
 	}
+	return 0;
+	remove(FILE_ORIGAL);
+	remove(FILE_SECOND);
 error_code:
 	return 0;
 }
 
 
 int main(int argc,char *argv[]){
-	/*if(argc!=3){
+	if(argc!=3){
 		printf("error argument\n");
 		return -1;
-	}*/
-	int pid=0;
-/*	if(strcmp(argv[1],"-p")==0){
-		pid=atoi(argv[2]);
+	}
+	int hash_size=0;
+	if(strcmp(argv[1],"-p")==0){
+		hash_size=atoi(argv[2]);
 	}else{
-		printf("error pid!\n");
+		printf("error argument!\n");
 		return -1;
-	}*/	
+	}	
+	if(hash_size!=512&&hash_size!=1024&&hash_size!=2048&&hash_size!=4096){
+			printf("error hash size!\n");	
+			return -1;
+	}
+	vm_info.hash_size=hash_size;
 	virConnectPtr conn;
 	conn=virConnectOpen("qemu:///system");
 	if(conn==NULL){
