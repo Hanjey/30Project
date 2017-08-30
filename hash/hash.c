@@ -20,15 +20,21 @@ static const char rcsid[] = "$Id$";
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include "hash.h"
-//#define file_org "/root/temp/first.txt"
-//#define file_sec "/root/temp/second.txt"
-/*512k for one thread*/
-#define max_hash 65536
-int hash_thread(HashNode *org_node,HashNode *sec_node){
+
+
+#define first_file  "/root/temp/first.txt"
+#define second_file  "/root/temp/second.txt"
+/*4M for once hash*/
+#define once_hash 4194304
+
+
+static int total_num=0;
+static int eff_num=0;
+int hash_thread(HashNode *org_node,HashNode *sec_node,int flags){
 	char *start_org,*start_sec,*end_org,*end_sec;
-	char *zero_str="61574272";
+	char *zero_str="cdb22d25";
 	float res;
-	int total_num=0,eff_num=0;
+//	int total_num=0,eff_num=0;
 	start_org=org_node->start_address;
 	end_org=org_node->end_address;
 	start_sec=sec_node->start_address;
@@ -49,25 +55,36 @@ int hash_thread(HashNode *org_node,HashNode *sec_node){
 		start_org+=9;
 		start_sec+=9;
 	}
-	res=(float)eff_num/total_num*100;
-	printf("total_num:%d  eff_num:%d \n",total_num,eff_num);
-	printf("match rate:%.2f \%\n",res);
+//	printf("total_num:%d  eff_num:%d \n",total_num,eff_num);
+	if(flags){
+		res=(float)eff_num/total_num*100;
+		printf("total_num:%d  eff_num:%d \n",total_num,eff_num);
+		printf("match rate:%.2f \%\n",res);
+	}
 	return 0;
 }
 
 
 int hash_file(char *file_org,char *file_sec){
 	int fd_org,fd_sec;
-	int thread_index;
+	int hash_index=0;
 	struct stat sb_org;
 	struct stat sb_sec;
 	void *add_org,*add_sec;
+	int flags=0;
+	int map_size=0;
+	HashNode org_node,sec_node;
 	fd_org=open(file_org,O_RDONLY);
 	fd_sec=open(file_sec,O_RDONLY);
 	fstat(fd_org,&sb_org);
 	fstat(fd_sec,&sb_sec);
-	add_org=mmap(NULL,sb_org.st_size, PROT_READ, MAP_PRIVATE, fd_org, 0);
-	add_sec=mmap(NULL,sb_sec.st_size, PROT_READ, MAP_PRIVATE, fd_sec, 0);
+	printf("org.size:%d\n",sb_org.st_size);
+	printf("sec.size:%d\n",sb_sec.st_size);
+begin_mmap:
+	map_size=sb_org.st_size-hash_index*once_hash<once_hash?sb_org.st_size-hash_index*once_hash:once_hash;
+	if(map_size<once_hash)flags=1;
+	add_org=mmap(NULL,map_size, PROT_READ, MAP_PRIVATE, fd_org,hash_index*once_hash);
+	add_sec=mmap(NULL,map_size, PROT_READ, MAP_PRIVATE, fd_sec,hash_index*once_hash);
 	if(add_org==MAP_FAILED){
 		printf("mmap org file failed!\n");
 		goto end_map;
@@ -76,34 +93,36 @@ int hash_file(char *file_org,char *file_sec){
 		printf("mmap sec file failed!\n");
 		goto end_map;
 	}
-	printf("org map address:%p org file size:%d\n",add_org,sb_org.st_size);
-	printf("sec map address:%p sec file size:%d\n",add_sec,sb_sec.st_size);
-	HashNode org_node,sec_node;
+	printf("org map address:%p map_size:%d\n",add_org,map_size);
+	printf("sec map address:%p map_size:%d\n",add_sec,map_size);
 	org_node.start_address=add_org;
-	org_node.end_address=add_org+sb_org.st_size;
+	org_node.end_address=add_org+map_size;
 	sec_node.start_address=add_sec;
-	sec_node.end_address=add_sec+sb_sec.st_size;
-	hash_thread(&org_node,&sec_node);
-    int hash_lenth=max_hash*9;
+	sec_node.end_address=add_sec+map_size;
+	hash_thread(&org_node,&sec_node,flags);
+//	if(!flags)goto begin_mmap;
 	/*split hash file*/
-end_map:
-	close(fd_org);
-	close(fd_sec);
 	if(add_org!=MAP_FAILED){
-		if ((munmap((void *)add_org, sb_org.st_size)) == -1) {  
+		if ((munmap((void *)add_org,map_size)) == -1) {  
 			perror("munmap failed\n");  
 		}  	
 	}
 	if(add_sec!=MAP_FAILED){
-		if ((munmap((void *)add_sec, sb_sec.st_size)) == -1) {  
+		if ((munmap((void *)add_sec,map_size)) == -1) {  
 			perror("munmap failed\n");  
 		}  
 	}
+	hash_index++;
+	if(!flags)goto begin_mmap;
+end_map:
+	 close(fd_org);
+	 close(fd_sec);
 	return 0;
 }
-/*int main(){
-	hash_file();
+/*
+int main(){
+	hash_file(first_file,second_file);
 	return 0;
-}*/
-
+}
+*/
 

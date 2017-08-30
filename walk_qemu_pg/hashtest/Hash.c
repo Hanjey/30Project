@@ -1,10 +1,11 @@
 #include "Hash.h"
-
-/*static inline __u32 rol32(int word, unsigned int shift)
+//#include<stdio.h>
+//#include<stdlib.h>
+// #define u32 unsigned int
+/*static inline u32 rol32(int word, unsigned int shift)
 {
 	return (word << shift) | (word >> (32 - shift));
 }*/
-
 /* An arbitrary initial parameter */
 #define JHASH_INITVAL		0xdeadbeef
 /* __jhash_mix -- mix 3 32-bit values reversibly. */
@@ -62,6 +63,7 @@ unsigned int jhash32(const int *k, int length, int initval){
  * hash_value buffer which store the hash value
  * hash_size hash length once a time 
  * */
+
 int calc_check_mem(struct page *page,u32 *value,int hash_size){
 	if(hash_size!=512&&hash_size!=1024&&hash_size!=2048&&hash_size!=4096)
 		return -1;
@@ -76,13 +78,28 @@ int calc_check_mem(struct page *page,u32 *value,int hash_size){
 	return 1;
 }
 /*hash entire page*/
+
 int calc_check_num(struct page *page,u32 *hash_value,int hash_size){
 	u32 checknum;
 	void *addr=kmap_atomic(page);
 	checknum=jhash32(addr,PAGE_SIZE/4,17);
 	kunmap_atomic(addr);
 	return checknum;
-}
+}/*
+int main(){
+	char *addr512=(char *)malloc(512);
+	char *addr1024=(char *)malloc(1024);
+	char *addr2048=(char *)malloc(2048);
+	char *addr4096=(char *)malloc(4096);
+	memset(addr512,0,512);
+	memset(addr512,0,1024);
+	memset(addr512,0,2048);
+	memset(addr512,0,4096);
+	printf("512:%08x\n",jhash32(addr512 ,512/4,17));
+	printf("512:%08x\n",jhash32(addr1024,1024/4,17));
+	printf("512:%08x\n",jhash32(addr2048,2048/4,17));
+	printf("512:%08x\n",jhash32(addr4096,4096/4,17));
+}*/
 /*
 int main(){
     printf("please input file path:\n");

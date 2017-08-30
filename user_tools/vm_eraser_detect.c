@@ -478,7 +478,6 @@ int main_menu(virConnectPtr conn){
 	 	goto error_code;
 	 }
 	vm_info.pid=getPidByUUID(uuid);
-     printf("pid:%d\n",vm_info.pid);
 	 //return 0;
 	/*dom_source=get_vm_image_path(conn,dom);
 	  if(dom_source==NULL){
@@ -515,7 +514,7 @@ begin_hash:
 		printf("begin cacluate match rate------\n");
 		hash_file(FILE_ORIGAL,FILE_SECOND);
 	}
-	return 0;
+	//return 0;
 	remove(FILE_ORIGAL);
 	remove(FILE_SECOND);
 error_code:
